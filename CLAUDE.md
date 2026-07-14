@@ -131,6 +131,28 @@ The core insight of `detect/secrets`: the uploaded set was every git object reac
 `.pem`. Those sort first in the report because they are what the user cannot find by looking at their
 own repo.
 
+## Display
+
+The report has three modes. Default is a SUMMARY: it names totals (archive counts, secret
+counts), flags what matters most (secrets deleted from checkout, since those are the ones
+the user cannot find by looking at their own repo), and points to `--verbose` and `--json`
+for detail, so the reader can tell they're looking at a summary rather than the whole
+record. `--verbose` prints the complete receipt: every `gs://` destination, every secret
+file by name and blob id, every evidence row. `--json` is the canonical, structured version
+of the same complete record, for fleet collection and automated tools.
+
+**Archive counts are total and unique.** Each upload attempt is a separate
+`repo_state.upload.enqueued` event, so a retried upload inflates the total without changing
+the destination. "64 archives, 64 unique objects" means 64 separate snapshots with no
+retries; "64 archives, 12 unique objects" means 64 attempts landing on only 12 distinct
+`gs://` paths. The gap between the two numbers is itself the signal — it is what separates
+sustained collection from an upload that kept failing and retrying.
+
+**Version evidence cites the log file it came from**, not just the source category
+("logs"). On a host with rotated logs, a version read from `unified.jsonl.2.gz` and one
+read from `unified.jsonl` are not equally current, and the path is what lets a reader tell
+which is which.
+
 ## Conventions
 
 - **Config mitigation is two independent settings**, `telemetry.trace_upload = false` **and**

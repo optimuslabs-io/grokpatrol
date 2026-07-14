@@ -10,7 +10,8 @@ The Grok Build CLI was found to silently upload entire git repositories to the G
 - **files deleted from the checkout but still reachable in git history** — which is
   exactly where secrets tend to hide.
 
-Confirmed affected: `0.2.93`. Reported still present through `0.2.99`.
+Confirmed affected: `0.2.93`. Reported still present in versions through at least `0.2.99`.
+The tool is version `0.1.0` and can detect versions `0.1.212` through the latest observed.
 
 Most published indicators were network-based — you had to be watching the wire while it
 happened. `grokpatrol` answers the question you can still ask afterwards: **what evidence
@@ -32,12 +33,18 @@ No dependencies, no install step, nothing to configure.
 ## Use
 
 ```sh
-grokpatrol                    # scan this machine
-grokpatrol --json             # machine-readable, for fleet collection
+grokpatrol                    # scan this machine (summarized output)
+grokpatrol --verbose          # scan this machine (full archive & secret list)
+grokpatrol --json             # machine-readable, for fleet collection (all details)
 ```
 
-The report names your repositories, the credential files inside them, and the git object ids
-of those files. It is an incident document about your machine, and it is meant to stay on it.
+The default report is a transparent **summary**: it names totals (archive counts, secret counts),
+tells you which ones matter most (secrets deleted from your checkout), and points you to `--verbose`
+and `--json` for the complete receipt. The summary is not a redaction — it's an admission of
+what it is, with pointers to everything it withholds.
+
+`--verbose` lists every `gs://` destination, every secret file by name and blob id, and all evidence rows.
+`--json` is the complete forensic record for fleet collection or automated tools.
 
 There is no `--quick`. The filesystem walk used to be optional, and a scan that skipped it
 could not see a grok binary, a staged archive, or a second `.grok` home — yet it reported
@@ -52,20 +59,27 @@ screen. The report itself goes to stdout, so `grokpatrol --json | jq` still work
 watch. `--quiet` silences it.
 
 ```
-grokpatrol scanning /Users/you
+grokpatrol 0.1.0 scanning /Users/you
 
   → deepscan  walking the filesystem for grok homes, upload queues, staged archives, and executables carrying the bucket name
     ✓ deepscan  1 executable carrying the bucket name, 1 upload queue, 2 staged archives (28ms)
   → logs      reading Grok's logs (incl. rotated and gzipped) for repo_state.upload.start / .enqueued events
   → queue     listing the upload_queue: staged codebase archives, and manifests naming the destination bucket
   → config    checking config.toml for BOTH upload mitigations: harness.disable_codebase_upload and telemetry.trace_upload
-  → version   inferring the Grok version from install manifests, package metadata and binary strings (the grok binary is never executed)
+  → version   inferring the Grok version from install manifests, package metadata and binary strings
     ✓ logs      2 repositories with 3 archives QUEUED FOR UPLOAD, 1 repository collected, upload unconfirmed
     ✓ queue     2 codebase archives staged (371.2 KB), 1 manifest naming the bucket
     ✓ config    NEITHER mitigation set: uploads are not blocked
-    ✓ version   0.2.93 -- CONFIRMED AFFECTED
+    ✓ version   0.1.212, 0.2.39, 0.2.51, 0.2.56 -- REPORTED AFFECTED
   → secrets   git rev-list --objects HEAD minus the working tree, per implicated repository
-    ✓ secrets   3 secret files across 3 repositories, 2 DELETED FROM THE CHECKOUT but still in history
+    ✓ secrets   3 secret files, 2 DELETED FROM THE CHECKOUT but still in history
+
+VERDICT: COMPROMISED
+  2 repositories collected and 3 archives built and queued for upload to gs://grok-code-session-traces/.
+
+LIKELY EXPOSED SECRETS
+  3 secret files, 2 deleted from the checkout but still in history
+  3 secret files found. --verbose lists them by name and blob id; --json has the full record.
 ```
 
 A detector that finds nothing says so out loud, rather than printing nothing: a silent line is
@@ -116,14 +130,18 @@ options nobody has enumerated.
 
 ### Secrets
 
-The secrets row above is the one that matters most. The exfiltrated set was *"every git object
+The secrets section is the one that matters most. The exfiltrated set was *"every git object
 reachable from HEAD"*, which is precisely what `git rev-list --objects HEAD` enumerates.
 Subtracting the current checkout from it yields the files that are **gone from your working
 tree but still alive in history** — the deleted `.env`, the rotated-out `.pem`. You cannot
 find those by looking at your own repository, and they went out with the archive.
 
-Each one is reported with its **git object id**, which `rev-list` prints on the same line as
-the path. That is the one claim in this report you can check for yourself:
+**In default mode**, the report shows you the count of secrets and specifically flags how many are
+deleted from your checkout (the ones you cannot find by looking) — because those are the priority:
+they're off your disk but alive in git history, and they went out first.
+
+**With `--verbose`**, each secret is reported with its **full path and git object id**, which `rev-list`
+prints on the same line as the path. That is the one claim in this report you can check for yourself:
 
 ```sh
 git -C ~/work/payments-api cat-file -p d6da7879bc89     # the .env you deleted, still in history
