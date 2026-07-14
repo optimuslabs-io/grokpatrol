@@ -1,0 +1,12 @@
+# Build artifacts
+/dist/
+
+# Test/demo fixture data — generated or captured from real hosts, never committed
+/data/
+
+# OS cruft
+.DS_Store
+
+# Go
+*.test
+*.out
