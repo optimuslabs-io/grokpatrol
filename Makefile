@@ -3,7 +3,10 @@ PKG     := github.com/optimuslabs/grokpatrol/internal/buildinfo
 MAIN    := ./cmd/$(BIN)
 DIST    := dist
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Falls back to the version baked into internal/buildinfo when no git tag exists,
+# so a build from a fresh clone is still stamped with a real number.
+BASE_VERSION := 0.1.0
+VERSION ?= $(shell git describe --tags --dirty 2>/dev/null || echo $(BASE_VERSION))
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 # SOURCE_DATE_EPOCH makes the stamp reproducible; the fallback covers BSD and GNU date.
 DATE    ?= $(shell date -u -d "@$${SOURCE_DATE_EPOCH:-$$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$${SOURCE_DATE_EPOCH:-$$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)

@@ -60,6 +60,7 @@ func run() int {
 		asJSON    = flag.Bool("json", false, "emit the machine-readable report on stdout")
 		colorMode = flag.String("color", "auto", "auto | always | never")
 		quiet     = flag.Bool("quiet", false, "print only the verdict")
+		verbose   = flag.Bool("verbose", false, "print every archive, secret and evidence row instead of a sample")
 		failOn    = flag.String("fail-on", "medium", "lowest severity that yields a non-zero exit: none|low|medium|high|critical")
 		exitZero  = flag.Bool("exit-zero", false, "always exit 0 unless the tool itself failed")
 		showVer   = flag.Bool("version", false, "print version and exit")
@@ -147,8 +148,9 @@ func run() int {
 		}
 	} else {
 		report.Human(os.Stdout, rep, report.Style{
-			Color: useColor(*colorMode, os.Stdout),
-			Quiet: *quiet,
+			Color:   useColor(*colorMode, os.Stdout),
+			Quiet:   *quiet,
+			Verbose: *verbose,
 		})
 	}
 

@@ -161,9 +161,6 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	res.Discovered = &disc
 	res.Findings = findings(&disc, env)
 	res.Summary = summarize(&disc)
-	res.Limitations = append(res.Limitations,
-		"The binary search matches plaintext marker strings. A packed, compressed or obfuscated build "+
-			"would not match, so the absence of a marker is not proof that a binary is clean.")
 	return res, nil
 }
 

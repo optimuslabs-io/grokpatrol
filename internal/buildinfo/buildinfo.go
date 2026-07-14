@@ -3,8 +3,12 @@ package buildinfo
 
 import "runtime"
 
+// Version is the tool's own release version. It is a real number rather than "dev"
+// so that a report pasted into a ticket, or compared across a fleet, says which build
+// produced it -- a forensic report whose provenance is "dev" is one nobody can
+// reproduce. The Makefile overrides this from `git describe` when a tag exists.
 var (
-	Version = "dev"
+	Version = "0.1.0"
 	Commit  = "none"
 	Date    = "unknown"
 )

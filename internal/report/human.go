@@ -15,6 +15,14 @@ import (
 type Style struct {
 	Color bool
 	Quiet bool
+	// Verbose prints every row this report would otherwise sample: every archive, every
+	// secret file, every evidence line. The default report is a SUMMARY that names its
+	// own totals and points at --verbose and --json; it is not a shorter truth.
+	//
+	// Truncation is display-only and always has been. The findings keep every item and
+	// --json is the complete forensic record, which is what makes the "N more" pointer a
+	// promise rather than a lie.
+	Verbose bool
 }
 
 const (
@@ -114,7 +122,7 @@ func otherFindings(w io.Writer, rep *model.Report, s Style) {
 			fmt.Fprintf(w, "    %s\n", s.c(dim, wrap(f.Detail, 88, "    ")))
 		}
 
-		shown, omitted := capRows(f.Evidence)
+		shown, omitted := s.capRows(f.Evidence)
 		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 		for _, e := range shown {
 			fmt.Fprintf(tw, "    %s\t%s\t%s\n", evidenceWhere(e), e.Locator, s.c(dim, e.Note))
@@ -183,22 +191,6 @@ func sevLabel(sev model.Severity, s Style) string {
 // alongside the verdict; twenty push it off.
 const maxEvidenceRows = 10
 
-// maxArchiveRows bounds the ARCHIVES QUEUED FOR UPLOAD list, and is deliberately a
-// different, much larger number than maxEvidenceRows.
-//
-// The two lists fail in opposite directions. STAGING enumerates what is sitting in
-// upload_queue -- tens of thousands of files on a real host -- and there ten rows is
-// a sample, because the finding's title already carries the true total. This list is
-// the RECEIPT: every line is an enqueue event Grok itself wrote, naming the exact
-// gs:// object your code went to. Ten of those is not a sample, it is a redaction.
-//
-// So the cap here exists only to stop a pathological host -- a months-long session
-// history, thousands of turns -- from burying the verdict under its own evidence,
-// which is the failure maxEvidenceRows was born from. 500 covers any realistic
-// session (the host this was built against had 64, two per turn over 32 turns) while
-// still bounding the worst case, and anything it drops is still in --json.
-const maxArchiveRows = 500
-
 // staging shows what is sitting on disk right now, waiting to go out (or already
 // gone). A populated upload_queue and a manifest naming the bucket are among the
 // strongest indicators there are, so they get their own section rather than being
@@ -226,7 +218,7 @@ func staging(w io.Writer, rep *model.Report, s Style) {
 			if f.Severity >= model.SevCritical {
 				b.title = s.c(red, f.Title)
 			}
-			shown, omitted := capRows(f.Evidence)
+			shown, omitted := s.capRows(f.Evidence)
 			for _, e := range shown {
 				label := e.Note
 				if e.SizeBytes > 0 {
@@ -468,7 +460,19 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 		} else if v.Class == model.VersionReportedAffected {
 			note = s.c(yellow, "REPORTED AFFECTED")
 		}
-		lines = append(lines, [2]string{"version", fmt.Sprintf("%s  (%s)  %s", v.Version, v.Source, note)})
+		// The PATH, not the word "logs". A row reading "0.2.51  (logs)  REPORTED AFFECTED"
+		// names a category, not a location -- and on a host with four versions strewn across
+		// a rotated log history, which FILE each was read from is the difference between a
+		// build that ran once in May and the one running now. Every other evidence line in
+		// this report cites where it came from; this one asserted a version from nowhere.
+		//
+		// Source is the fallback for evidence that genuinely has no path.
+		where := v.Path
+		if where == "" {
+			where = "(" + v.Source + ")"
+		}
+		lines = append(lines, [2]string{"version",
+			fmt.Sprintf("%s  %s  %s", v.Version, note, s.c(dim, where))})
 	}
 
 	for _, f := range rep.Findings {
@@ -476,9 +480,22 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 		case "config.mitigated":
 			lines = append(lines, [2]string{"config.toml", s.c(green, "MITIGATED") + " -- both upload mitigations set"})
 		case "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable":
-			lines = append(lines, [2]string{"config.toml", s.c(yellow, "EXPOSED") + " -- " + f.Title})
+			// A short, plain phrase per case rather than the finding's Title. The titles are
+			// written to stand alone in --json and one of them ("config.toml uses constructs
+			// this scanner does not model") is parser jargon that tells a reader nothing they
+			// can act on. What this row owes them is the state and the consequence.
+			//
+			// The unparseable case is NOT dropped, only reworded: a config we could not read
+			// is a config whose mitigations are UNCONFIRMED, which is why the tool fails closed
+			// to EXPOSED. Deleting the row would delete the reason for the verdict.
+			lines = append(lines, [2]string{"config.toml", s.c(yellow, "EXPOSED") + " -- " + configState(f.ID)})
 		case "config.auth_present":
-			lines = append(lines, [2]string{"auth.json", "present (grokpatrol did not read it)"})
+			// Just "present". The parenthetical used to read "(grokpatrol did not read it)",
+			// which is true, but the INSTALLATION table is an inventory of what is on the
+			// machine -- not the place to advertise what this tool declines to do. The
+			// guarantee lives in the code (auth.json is never opened) and in the docs; a
+			// reader scanning an inventory column does not need it re-litigated per row.
+			lines = append(lines, [2]string{"auth.json", "present"})
 		case "config.other_keys":
 			lines = append(lines, [2]string{"other options", strings.TrimPrefix(f.Title, "Other upload-related options are set: ")})
 		}
@@ -494,6 +511,20 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 	}
 	tw.Flush()
 	fmt.Fprintln(w)
+}
+
+// configState is the INSTALLATION row's plain-language reading of a config finding.
+// The detector's own Title still carries the full technical statement into --json.
+func configState(id string) string {
+	switch id {
+	case "config.absent":
+		return "no config.toml, so neither upload mitigation is set"
+	case "config.explicitly_disabled":
+		return "the upload mitigations are explicitly turned off"
+	case "config.unparseable":
+		return "config.toml could not be fully read, so the mitigations are UNCONFIRMED -- verify it by hand"
+	}
+	return "the upload mitigations are not both set"
 }
 
 const pad = "               "
@@ -583,8 +614,8 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 
 // capRows truncates for display only, never for the record. It returns the items
 // to print and how many were withheld.
-func capRows(ev []model.Evidence) (shown []model.Evidence, omitted int) {
-	if len(ev) <= maxEvidenceRows {
+func (s Style) capRows(ev []model.Evidence) (shown []model.Evidence, omitted int) {
+	if s.Verbose || len(ev) <= maxEvidenceRows {
 		return ev, 0
 	}
 	return ev[:maxEvidenceRows], len(ev) - maxEvidenceRows
@@ -686,22 +717,44 @@ func archiveDetail(w io.Writer, rep *model.Report, s Style) {
 		return
 	}
 
-	fmt.Fprintf(w, "\n  %s%s\n", s.c(bold, "ARCHIVES QUEUED FOR UPLOAD"),
-		s.c(dim, "   (one line per archive, as recorded in Grok's own logs)"))
+	// WITHOUT --verbose this section is COUNTS, not paths.
+	//
+	// Unique is reported alongside the total because they are different facts and the gap
+	// between them means something. An enqueue event is logged per ATTEMPT, so the same
+	// gs:// object can be enqueued repeatedly when an upload is retried; correlate counts
+	// those retries rather than deduping them, on purpose ("duplicates are retries; they
+	// are counted, not deduped"). So the total is how many times Grok tried to ship an
+	// archive, and unique is how many distinct objects your code was written to. A host
+	// with 64 archives and 12 unique objects retried hard; one with 64 and 64 shipped 64
+	// separate snapshots. Printing only the total would hide which happened.
+	//
+	// --verbose prints every gs:// object with its provenance; --json is complete.
+	fmt.Fprintf(w, "\n  %s", s.c(bold, "ARCHIVES QUEUED FOR UPLOAD"))
+	if s.Verbose {
+		fmt.Fprintf(w, "%s\n", s.c(dim, "   (one line per archive, as recorded in Grok's own logs)"))
+	} else {
+		fmt.Fprintf(w, "%s\n", s.c(dim, "   (counts only -- --verbose lists every gs:// object)"))
+	}
 
-	// This list is the receipt -- one line per object queued to xAI -- so it is capped
-	// far higher than the rest of the report: a truncated receipt is the thing the
-	// reader cannot check by hand. The gs:// path already carries the phase
-	// (.../turn_3/before_codebase.tar.gz), so there is no phase column; it would
-	// repeat, in a fixed-width gutter, a word that is right there in the path.
+	if !s.Verbose {
+		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		for _, r := range withArchives {
+			total, unique, delivered := archiveCounts(r)
+			cell := fmt.Sprintf("%s, %d unique %s",
+				engine.Plural(total, "archive"), unique, plainPlural(unique, "object"))
+			if delivered > 0 {
+				cell += ", " + s.c(red+bold, fmt.Sprintf("%d DELIVERY CONFIRMED", delivered))
+			}
+			fmt.Fprintf(tw, "  %s\t%s\n", s.c(cyan, r.RepoPath), s.c(red, cell))
+		}
+		tw.Flush()
+		citations(w, rep, s)
+		return
+	}
+
 	for _, r := range withArchives {
 		fmt.Fprintf(w, "  %s\n", s.c(cyan, r.RepoPath))
-
-		shown, omitted := r.Archives, 0
-		if len(shown) > maxArchiveRows {
-			shown, omitted = shown[:maxArchiveRows], len(shown)-maxArchiveRows
-		}
-		for _, a := range shown {
+		for _, a := range r.Archives {
 			line := s.c(red, a.GCSPath)
 			if a.Delivered {
 				line += "  " + s.c(red+bold, "<- DELIVERY CONFIRMED")
@@ -711,14 +764,37 @@ func archiveDetail(w io.Writer, rep *model.Report, s Style) {
 				fmt.Fprintf(w, "      %s\n", s.c(dim, p))
 			}
 		}
-		// The pointer is what keeps the truncation honest: the findings and --json keep
-		// every archive, so this promise is one the JSON can actually keep.
-		if omitted > 0 {
-			fmt.Fprintf(w, "    %s\n", s.c(dim,
-				fmt.Sprintf("... and %d more archives (full list in --json)", omitted)))
-		}
 	}
 	citations(w, rep, s)
+}
+
+// archiveCounts returns how many archives were enqueued for a repo, how many DISTINCT
+// gs:// objects they name, and how many had their delivery confirmed.
+func archiveCounts(r model.RepoStatus) (total, unique, delivered int) {
+	seen := map[string]bool{}
+	for _, a := range r.Archives {
+		total++
+		// An archive with no recorded destination still happened; it just cannot be
+		// deduplicated, so it counts as its own object rather than collapsing every
+		// path-less archive into one.
+		if a.GCSPath == "" || !seen[a.GCSPath] {
+			unique++
+			seen[a.GCSPath] = true
+		}
+		if a.Delivered {
+			delivered++
+		}
+	}
+	return total, unique, delivered
+}
+
+// plainPlural pluralizes a noun without prefixing the count, for use inside a phrase
+// that has already printed the number.
+func plainPlural(n int, noun string) string {
+	if n == 1 {
+		return noun
+	}
+	return noun + "s"
 }
 
 // archiveProvenance is the "how do you know" line: session, turn, timestamp, and
@@ -788,6 +864,50 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 
 	fmt.Fprintln(w, s.c(bold, "LIKELY EXPOSED SECRETS")+
 		s.c(dim, "   (filenames and object ids only -- contents were never read by this tool)"))
+
+	// WITHOUT --verbose this is a COUNT, not the rotation list.
+	//
+	// The count is not a summary of the list, it is a pointer to it: the number that
+	// survives into the default report is the one the reader acts on first -- how many
+	// secrets are gone from the checkout but still alive in the uploaded history, which
+	// they cannot find by looking at their own repository. The names, classes and blob
+	// ids are one --verbose away and complete in --json.
+	if !s.Verbose {
+		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		total, totalDeleted := 0, 0
+		for _, r := range rep.Repos {
+			if len(r.SecretFiles) == 0 {
+				continue
+			}
+			deleted := 0
+			for _, h := range r.SecretFiles {
+				if h.DeletedFromCheckout {
+					deleted++
+				}
+			}
+			total += len(r.SecretFiles)
+			totalDeleted += deleted
+
+			count := engine.Plural(len(r.SecretFiles), "secret file")
+			if deleted > 0 {
+				count += ", " + s.c(red+bold, fmt.Sprintf("%d deleted from the checkout but still in history", deleted))
+			}
+			fmt.Fprintf(tw, "  %s\t%s\n", s.c(cyan, r.RepoPath), count)
+		}
+		tw.Flush()
+		if total > 0 {
+			fmt.Fprintf(w, "\n  %s\n", s.c(dim,
+				fmt.Sprintf("%s found. --verbose lists them by name, class and blob id; --json has the full record.",
+					engine.Plural(total, "secret file"))))
+			if totalDeleted > 0 {
+				fmt.Fprintf(w, "  %s\n", s.c(red,
+					fmt.Sprintf("Rotate the %d you cannot see in your own checkout first.", totalDeleted)))
+			}
+		}
+		fmt.Fprintln(w)
+		return
+	}
+
 	for _, r := range rep.Repos {
 		if len(r.SecretFiles) == 0 {
 			continue

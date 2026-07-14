@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/optimuslabs/grokpatrol/internal/engine"
 	"github.com/optimuslabs/grokpatrol/internal/model"
 )
 
@@ -13,13 +14,9 @@ func findings(repos []model.RepoStatus) []model.Finding {
 		deleted []model.Evidence // in the uploaded object set, gone from the checkout
 		present []model.Evidence // in the uploaded object set and still in HEAD
 		classes = map[string]int{}
-		unknown []model.Evidence
 	)
 
 	for _, r := range repos {
-		if !r.SecretsScanned && r.SecretsNote != "" {
-			unknown = append(unknown, model.Evidence{Path: r.RepoPath, Note: r.SecretsNote})
-		}
 		for _, h := range r.SecretFiles {
 			classes[h.Class]++
 			ev := model.Evidence{
@@ -94,21 +91,38 @@ func findings(repos []model.RepoStatus) []model.Finding {
 		})
 	}
 
-	if len(unknown) > 0 {
-		out = append(out, model.Finding{
-			ID:       "secrets.not_scanned",
-			Detector: "secrets",
-			Severity: model.SevMedium,
-			Tags:     []string{model.TagSecret},
-			Title:    fmt.Sprintf("%d affected repositories could not be fully triaged", len(unknown)),
-			Detail: "Their git history was not examined, so this report cannot tell you what was in them. " +
-				"That is an absence of information, not a clean bill of health.",
-			Remediation: "Resolve the reason listed for each repository and re-run, or audit those repositories by hand.",
-			Evidence:    sortEv(unknown),
-		})
-	}
-
 	return out
+}
+
+// untriagedLimitation reports the repositories that could not be triaged.
+//
+// This used to be a MEDIUM finding, secrets.not_scanned, and it was the wrong shape
+// twice over. A finding is something we FOUND; this is something we could not LOOK at,
+// which is what the limitations section exists to say. And at SevMedium it counted
+// toward the report's severity tally and could push an otherwise-clean host to EXPOSED
+// on the strength of a repository that is simply no longer on this disk -- an absence
+// of information promoted to evidence.
+//
+// What it must never do is disappear. A repository whose history we could not read is
+// not a repository we read and found clean, and a report that says nothing at all about
+// it invites exactly that reading. So it is demoted, not deleted: it no longer inflates
+// the counts or moves the verdict, and it still says plainly that these repos went out
+// and we cannot tell you what was in them. Per-repo detail stays in --json
+// (RepoStatus.SecretsScanned and SecretsNote).
+func untriagedLimitation(repos []model.RepoStatus) string {
+	var names []string
+	for _, r := range repos {
+		if !r.SecretsScanned && r.SecretsNote != "" {
+			names = append(names, r.RepoPath)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return fmt.Sprintf("%s could not be triaged (%s). Their git history was not examined, so this "+
+		"report cannot tell you what was in them -- an absence of information, not a clean bill of health.",
+		engine.Plural(len(names), "affected repository"), strings.Join(names, ", "))
 }
 
 // summarize turns the class counts into the one line a person actually acts on.

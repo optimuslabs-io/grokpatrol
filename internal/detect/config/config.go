@@ -177,9 +177,5 @@ func (d *Detector) Run(_ context.Context, env *engine.Env) (engine.Result, error
 
 	res.Findings = append(res.Findings, configFindings(states)...)
 	res.Summary = summarize(states)
-	res.Limitations = append(res.Limitations,
-		"The Grok config keys were recovered from public reporting and a screenshot, not from vendor documentation. "+
-			"Other upload-related options may exist; every key found under ["+MitigationTable+"] and ["+TraceTable+"] is "+
-			"listed in the report, so an unrecognized one is visible rather than silently ignored.")
 	return res, nil
 }

@@ -70,6 +70,9 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	}
 
 	res.Findings = findings(res.Repos)
+	if l := untriagedLimitation(res.Repos); l != "" {
+		res.Limitations = append(res.Limitations, l)
+	}
 	res.Summary = summarizeRepos(res.Repos)
 	return res, nil
 }

@@ -129,13 +129,23 @@ func epochToTime(f float64) time.Time {
 
 // Aliases. Order matters only in that the first hit wins; all are plausible.
 var (
-	keysEvent    = []string{"event", "event_name", "name", "type", "msg", "message", "evt"}
-	keysSID      = []string{"sid", "session_id", "ctx.sid", "ctx.session_id", "session"}
-	keysTurn     = []string{"ctx.turn_number", "turn_number", "ctx.turn", "turn", "ctx.turn_id"}
-	keysRepo     = []string{"ctx.repo_path", "repo_path", "ctx.repo", "repo", "ctx.cwd", "cwd", "ctx.workspace", "workspace"}
-	keysGCS      = []string{"gcs_path", "gcsPath", "ctx.gcs_path", "destination", "dest", "object_path", "path"}
-	keysTime     = []string{"ts", "time", "timestamp", "@timestamp", "ctx.ts", "datetime"}
-	keysVer      = []string{"version", "ctx.version", "app_version", "cli_version", "ctx.app_version"}
+	keysEvent = []string{"event", "event_name", "name", "type", "msg", "message", "evt"}
+	keysSID   = []string{"sid", "session_id", "ctx.sid", "ctx.session_id", "session"}
+	keysTurn  = []string{"ctx.turn_number", "turn_number", "ctx.turn", "turn", "ctx.turn_id"}
+	keysRepo  = []string{"ctx.repo_path", "repo_path", "ctx.repo", "repo", "ctx.cwd", "cwd", "ctx.workspace", "workspace"}
+	keysGCS   = []string{"gcs_path", "gcsPath", "ctx.gcs_path", "destination", "dest", "object_path", "path"}
+	keysTime  = []string{"ts", "time", "timestamp", "@timestamp", "ctx.ts", "datetime"}
+	// "ver" is the one Grok actually writes, and its absence here was a live false
+	// negative: the real host stamps `"ver":"0.2.51"` on 649 of its log lines, and
+	// grokpatrol -- looking only for "version" and friends -- reported "no version
+	// evidence found" on a machine that announced its own version on almost every line.
+	// The INSTALLATION table simply had no version row, so the reader was never told
+	// they were running a build inside the affected range.
+	//
+	// It is listed AFTER the long-form spellings, not before: pick() takes the first
+	// alias that resolves, and a line carrying both should be read from the explicit one.
+	keysVer = []string{"version", "ctx.version", "app_version", "cli_version", "ctx.app_version",
+		"ver", "ctx.ver"}
 	keysConsumer = []string{"ctx.consumer", "consumer", "ctx.client", "client", "ctx.caller", "caller"}
 	// keysStatus finds an HTTP response code. No Grok build we have seen writes one on
 	// the upload leg -- the upload events have no outcome field at all -- so every alias

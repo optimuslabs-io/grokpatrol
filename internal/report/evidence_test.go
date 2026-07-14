@@ -48,14 +48,24 @@ func compromised() *model.Report {
 	}
 }
 
+func renderStyle(rep *model.Report, s Style) string {
+	var buf bytes.Buffer
+	Human(&buf, rep, s)
+	return buf.String()
+}
+
 // The gs:// destination is the single most important string in the report -- the
 // model calls it the smoking gun -- and the terminal used to collapse it to a digit
 // in an ARCHIVES column. Being told two archives were queued, without being told
 // where they went, is being told you were robbed without being shown the receipt.
+//
+// The default report is now a SUMMARY and prints counts instead of paths, so the
+// guarantee lives on --verbose. It is the same guarantee: the receipt still exists and
+// is still complete. What TestDefaultReportPointsAtWhatItWithholds enforces is that the
+// terse report can never quietly become a report that hides the receipt without saying
+// so -- a summary that does not admit it is one is just a lie with fewer lines.
 func TestLedgerPrintsTheDestinationAndItsWitness(t *testing.T) {
-	var buf bytes.Buffer
-	Human(&buf, compromised(), Style{})
-	out := buf.String()
+	out := renderStyle(compromised(), Style{Verbose: true})
 
 	if !strings.Contains(out, "gs://bucket/sess-a1/3/before_codebase.tar.gz") {
 		t.Error("the gs:// destination is missing: the report asserts an upload without showing where it went")
@@ -68,9 +78,41 @@ func TestLedgerPrintsTheDestinationAndItsWitness(t *testing.T) {
 	if !strings.Contains(out, "session sess-a1") || !strings.Contains(out, "turn 3") {
 		t.Error("the session and turn that built the archive are missing")
 	}
-	// One date reads like one event. This repo was being collected for a fortnight.
-	if !strings.Contains(out, "2026-06-30 -> 2026-07-11") {
-		t.Error("the collection window is missing: a reader who sees only the last date cannot tell a fortnight from a moment")
+
+	// The collection window is in the ledger TABLE, so it survives in both modes. One
+	// date reads like one event; this repo was being collected for a fortnight.
+	for _, s := range []Style{{}, {Verbose: true}} {
+		if !strings.Contains(renderStyle(compromised(), s), "2026-06-30 -> 2026-07-11") {
+			t.Error("the collection window is missing: a reader who sees only the last date cannot tell a fortnight from a moment")
+		}
+	}
+}
+
+// The terse default is allowed to withhold the receipt and the rotation list. It is NOT
+// allowed to withhold them silently.
+//
+// A reader of the default report has to be able to tell, from the default report alone,
+// that there is more and how to get it. Otherwise the summary reads as the whole truth,
+// and the one number they act on -- how many secrets are in the uploaded history -- is
+// the number they never learn.
+func TestDefaultReportPointsAtWhatItWithholds(t *testing.T) {
+	out := renderStyle(compromised(), Style{})
+
+	// The counts it does print. The fixture queues one archive to one object.
+	if !strings.Contains(out, "1 archive, 1 unique object") {
+		t.Error("the default report does not say how many archives were queued, and to how many DISTINCT " +
+			"objects -- the gap between those two numbers is what tells retries apart from separate snapshots")
+	}
+	if !strings.Contains(out, "secret file") {
+		t.Error("the default report does not say how many secrets were found")
+	}
+	// And the pointer to everything it did not.
+	if !strings.Contains(out, "--verbose") {
+		t.Error("the default report withholds the archives and the rotation list without telling the reader " +
+			"how to see them -- a summary that does not admit it is a summary")
+	}
+	if !strings.Contains(out, "--json") {
+		t.Error("the default report never mentions the complete forensic record")
 	}
 }
 
@@ -78,9 +120,7 @@ func TestLedgerPrintsTheDestinationAndItsWitness(t *testing.T) {
 // `git cat-file -p <blob>` shows them the secret this tool refuses to read. It came
 // free from rev-list, which the parser had been splitting and discarding.
 func TestSecretsPrintTheBlobAndHowToVerifyIt(t *testing.T) {
-	var buf bytes.Buffer
-	Human(&buf, compromised(), Style{})
-	out := buf.String()
+	out := renderStyle(compromised(), Style{Verbose: true})
 
 	if !strings.Contains(out, "blob 4f2a1c9deadb") {
 		t.Error("the git object id is missing: the user cannot verify that the deleted secret was really in the uploaded set")
@@ -96,19 +136,29 @@ func TestSecretsPrintTheBlobAndHowToVerifyIt(t *testing.T) {
 // The report must keep pointing at locations, never at values. This is invariant 4
 // and it is the reason model.Evidence has no excerpt field: a forensic tool that
 // prints the secret it found has become the leak it was hunting.
+//
+// Checked in BOTH modes: --verbose prints strictly more, so it is the mode where a
+// value would leak if one ever could.
 func TestReportNeverPrintsASecretValue(t *testing.T) {
-	rep := compromised()
 	// A value that would only ever appear if something read the file's contents.
 	const secretValue = "postgres://user:hunter2@prod/db"
 
-	var buf bytes.Buffer
-	Human(&buf, rep, Style{})
-	if strings.Contains(buf.String(), secretValue) {
-		t.Fatal("a secret VALUE reached the report")
+	for _, s := range []Style{{}, {Verbose: true}} {
+		if strings.Contains(renderStyle(compromised(), s), secretValue) {
+			t.Fatalf("a secret VALUE reached the report (verbose=%v)", s.Verbose)
+		}
 	}
-	// The location, by contrast, is the entire deliverable.
-	if !strings.Contains(buf.String(), ".env.production") {
+
+	// The location, by contrast, is the entire deliverable -- and under --verbose it must
+	// be there by name, or the rotation checklist cannot be acted on.
+	if !strings.Contains(renderStyle(compromised(), Style{Verbose: true}), ".env.production") {
 		t.Error("the secret's filename is missing: a rotation checklist you cannot locate is useless")
+	}
+	// The default must at least say one exists, and that it is the dangerous kind.
+	def := renderStyle(compromised(), Style{})
+	if !strings.Contains(def, "deleted from the checkout but still in history") {
+		t.Error("the default report does not flag the secrets the user CANNOT find by looking at their own " +
+			"checkout -- which is the only class of secret this tool exists to surface")
 	}
 }
 

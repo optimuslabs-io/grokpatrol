@@ -23,6 +23,8 @@ Download a binary for your platform from the release artifacts, or build it:
 ```sh
 make build      # ./dist/grokpatrol
 make release    # all six platforms + SHA256SUMS
+
+Window and Linux have not been tested
 ```
 
 No dependencies, no install step, nothing to configure.

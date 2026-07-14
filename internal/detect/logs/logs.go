@@ -64,9 +64,13 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	}
 
 	var (
-		events   []event
-		rawHits  []model.Evidence
-		versions = map[string]bool{}
+		events  []event
+		rawHits []model.Evidence
+		// version -> the log file it was first read from. A version with no provenance is
+		// a claim the reader cannot check, and "(logs)" was not a location: this host has
+		// four versions across a rotated history, and which FILE each came from is how you
+		// tell the build that ran last week from the one that ran today.
+		versions = map[string]string{}
 	)
 
 	for _, f := range files {
@@ -84,12 +88,13 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	repos, authSummary := correlate(events)
 	res.Repos = repos
 
-	for _, v := range sortedKeys(versions) {
+	for _, v := range sortedPathKeys(versions) {
 		res.Versions = append(res.Versions, model.VersionEvidence{
 			Version:    v,
 			Source:     "logs",
 			Confidence: "high", // it is what the running binary said about itself
 			Class:      classifyVersion(v),
+			Path:       versions[v], // display.go rewrites this home-relative
 		})
 	}
 
@@ -141,6 +146,22 @@ func summarize(files []string, repos []model.RepoStatus, rawHits []model.Evidenc
 // discover globs broadly. The rotation naming convention is unverified, so
 // anything that starts with "unified" and mentions .jsonl is fair game:
 // unified.jsonl, unified.jsonl.1, unified.jsonl.2.gz, unified-2026-07-01.jsonl.
+//
+// It looks in the grok home ITSELF as well as in its logs/ subdirectory, and that is
+// not defensive padding -- it is a fix for a false negative found on a real host.
+//
+// This used to read <home>/logs and nothing else. But a real ~/.grok keeps
+// unified.jsonl at the TOP LEVEL, with no logs/ directory at all, and on that machine
+// grokpatrol printed "No evidence was found that it has uploaded anything from this
+// machine yet" while a log holding 68 collection events and 64 queued archives sat
+// unread in the very directory it had just identified as the grok home. It was not
+// degraded and it did not warn: it reported a clean upload history with the proof one
+// readdir away. That is the worst failure this tool can have -- a confident all-clear
+// on a compromised host -- and it happened because the layout was assumed rather than
+// looked at.
+//
+// So the layout is no longer assumed. Both locations are read, duplicates collapse
+// through `seen`, and a home that has neither is simply a home with no logs.
 func discover(env *engine.Env, res *engine.Result) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -150,24 +171,29 @@ func discover(env *engine.Env, res *engine.Result) []string {
 		homes = []string{env.GrokHome}
 	}
 	for _, home := range homes {
-		dir := filepath.Join(home, "logs")
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				res.Errors = append(res.Errors, model.ScanError{
-					Detector: "logs", Kind: "io", Path: dir, Message: err.Error(), Material: true,
-				})
-			}
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() || !isLogName(e.Name()) {
+		for _, dir := range []string{home, filepath.Join(home, "logs")} {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				// A missing logs/ is ordinary (this host has none). A missing grok home is
+				// ordinary too -- deepscan hands us candidates. Anything else is material:
+				// a permission denial here hides the ledger, and a hidden ledger reads
+				// exactly like an empty one.
+				if !errors.Is(err, fs.ErrNotExist) {
+					res.Errors = append(res.Errors, model.ScanError{
+						Detector: "logs", Kind: "io", Path: dir, Message: err.Error(), Material: true,
+					})
+				}
 				continue
 			}
-			p := filepath.Join(dir, e.Name())
-			if !seen[p] {
-				seen[p] = true
-				out = append(out, p)
+			for _, e := range entries {
+				if e.IsDir() || !isLogName(e.Name()) {
+					continue
+				}
+				p := filepath.Join(dir, e.Name())
+				if !seen[p] {
+					seen[p] = true
+					out = append(out, p)
+				}
 			}
 		}
 	}
@@ -180,7 +206,7 @@ func isLogName(name string) bool {
 	return strings.HasPrefix(n, "unified") && strings.Contains(n, ".jsonl")
 }
 
-func ingest(path string, events *[]event, rawHits *[]model.Evidence, versions map[string]bool, res *engine.Result) {
+func ingest(path string, events *[]event, rawHits *[]model.Evidence, versions map[string]string, res *engine.Result) {
 	f, err := hostfs.OpenRead(path)
 	if err != nil {
 		res.Errors = append(res.Errors, model.ScanError{
@@ -259,7 +285,7 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 
 // handleLine reports whether the line decoded as JSON. Note the ordering: the raw
 // substring check runs FIRST, so it fires even on a line that fails to parse.
-func handleLine(line []byte, path string, lineNo int, events *[]event, rawHits *[]model.Evidence, versions map[string]bool) bool {
+func handleLine(line []byte, path string, lineNo int, events *[]event, rawHits *[]model.Evidence, versions map[string]string) bool {
 	if bytes.Contains(line, markerBucket) || bytes.Contains(line, markerArchive) {
 		*rawHits = append(*rawHits, model.Evidence{
 			Path:    path,
@@ -276,7 +302,9 @@ func handleLine(line []byte, path string, lineNo int, events *[]event, rawHits *
 	ev.File, ev.Line = path, lineNo
 
 	if ev.Version != "" {
-		versions[ev.Version] = true
+		if _, seen := versions[ev.Version]; !seen {
+			versions[ev.Version] = path
+		}
 	}
 	if ev.Kind != kindOther {
 		*events = append(*events, ev)
@@ -285,6 +313,16 @@ func handleLine(line []byte, path string, lineNo int, events *[]event, rawHits *
 }
 
 func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedPathKeys is sortedKeys for the version -> log-file map.
+func sortedPathKeys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
