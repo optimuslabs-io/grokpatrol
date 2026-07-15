@@ -16,7 +16,16 @@ type Env struct {
 	// or a second .grok home outside the configured one -- and it reported CLEAN just
 	// as confidently as a scan that did. A fast answer to "were my repositories
 	// uploaded" that is allowed to miss the evidence is not worth having.
-	ScanRoots       []string
+	ScanRoots []string
+	// ConfineWalk restricts the filesystem walk to exactly ScanRoots (plus the grok
+	// home), skipping the default home and system-bin roots. Production never sets
+	// it: a real scan MUST cover /usr/local/bin and the home tree, because that is
+	// where an install actually lands, and --scan-root is documented as an
+	// *additional* root, not a replacement. It exists for tests, whose fixtures are
+	// self-contained: without it every engine test also walks the host's system dirs
+	// (8 GB of /opt/hostedtoolcache on a CI runner), adding minutes under -race for
+	// coverage the fixture does not need.
+	ConfineWalk     bool
 	FollowSymlinks  bool
 	CrossFilesystem bool
 	Concurrency     int

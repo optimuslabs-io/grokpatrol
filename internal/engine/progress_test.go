@@ -46,6 +46,7 @@ func TestDetectorsSummarizeEvenWhenTheyFindNothing(t *testing.T) {
 		Home:          t.TempDir(),
 		GrokHome:      t.TempDir() + "/.grok",
 		ScanRoots:     []string{t.TempDir()},
+		ConfineWalk:   true, // skip the host's system-bin dirs; the fixture is self-contained
 		Concurrency:   2,
 		MaxFileSize:   1 << 20,
 		UseGit:        true,

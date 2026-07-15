@@ -203,6 +203,15 @@ func summarize(d *engine.Discovered) string {
 // roots: priority locations first, so an install is reported in well under a
 // second even when the full home walk takes a minute.
 func roots(env *engine.Env) []string {
+	// A confined walk (tests only) covers exactly the configured roots plus the grok
+	// home and deliberately skips the system-bin dirs. A production scan cannot do
+	// this -- an install lands in /usr/local/bin as readily as under home -- but a
+	// test fixture is self-contained, and walking the runner's system dirs (8 GB of
+	// /opt/hostedtoolcache on a CI box) added minutes to every engine test under
+	// -race for coverage the fixture never needed. See engine.Env.ConfineWalk.
+	if env.ConfineWalk {
+		return dedupe(append(append([]string{}, env.ScanRoots...), env.GrokHome))
+	}
 	var out []string
 	out = append(out, hostfs.PriorityRoots(env.Home)...)
 	out = append(out, hostfs.SystemBinDirs()...)
