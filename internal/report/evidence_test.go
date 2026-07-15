@@ -98,8 +98,11 @@ func TestLedgerPrintsTheDestinationAndItsWitness(t *testing.T) {
 func TestDefaultReportPointsAtWhatItWithholds(t *testing.T) {
 	out := renderStyle(compromised(), Style{})
 
-	// The counts it does print. The fixture queues one archive to one object.
-	if !strings.Contains(out, "1 archive, 1 unique object") {
+	// The counts it does print. The fixture queues one archive to one object; the
+	// ledger table's ARCHIVES cell carries both numbers as "1 (1 unique)". The format
+	// may change, but the CONTRACT this guards -- total AND distinct-object count, both
+	// present -- must not: the gap between them tells retries from separate snapshots.
+	if !strings.Contains(out, "1 (1 unique)") {
 		t.Error("the default report does not say how many archives were queued, and to how many DISTINCT " +
 			"objects -- the gap between those two numbers is what tells retries apart from separate snapshots")
 	}

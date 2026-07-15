@@ -62,6 +62,9 @@ func run() int {
 		colorMode = flag.String("color", "auto", "auto | always | never")
 		quiet     = flag.Bool("quiet", false, "print only the verdict")
 		verbose   = flag.Bool("verbose", false, "print every archive, secret and evidence row instead of a sample")
+		failOn    = flag.String("fail-on", "medium", "lowest severity that yields a non-zero exit: none|low|medium|high|critical")
+		exitZero  = flag.Bool("exit-zero", false, "always exit 0 unless the tool itself failed")
+		noAnim    = flag.Bool("no-animation", false, "skip the animated logo (progress still prints)")
 		showVer   = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Var(&scanRoot, "scan-root", "additional root to scan (repeatable)")
@@ -73,6 +76,7 @@ func run() int {
 	if *showVer {
 		fmt.Printf("grokpatrol %s (%s, built %s, %s)\n",
 			buildinfo.Version, buildinfo.Commit, buildinfo.Date, buildinfo.GoVersion())
+		fmt.Println("built with <3 by Optimus Labs")
 		return 0
 	}
 
@@ -116,7 +120,18 @@ func run() int {
 	// `grokpatrol --json | jq` must keep working.
 	var prog engine.Progress
 	if !*quiet {
-		p := report.NewProgress(os.Stderr, report.Style{Color: useColor(*colorMode, os.Stderr)})
+		style := report.Style{Color: useColor(*colorMode, os.Stderr)}
+		p := report.NewProgress(os.Stderr, style)
+		// The animated logo plays only into a real terminal: colour on and stderr being a
+		// TTY, and not opted out. A pipe/redirect, NO_COLOR, --color never, --no-animation,
+		// or GROKPATROL_NO_ANIM all skip it.
+		stderrIsTTY := false
+		if fi, err := os.Stderr.Stat(); err == nil {
+			stderrIsTTY = fi.Mode()&os.ModeCharDevice != 0
+		}
+		if stderrIsTTY && style.Color && !*noAnim && os.Getenv("GROKPATROL_NO_ANIM") == "" {
+			p.Splash()
+		}
 		p.Header(env.Home)
 		prog = p
 	}
