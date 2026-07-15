@@ -79,6 +79,15 @@ func Human(w io.Writer, rep *model.Report, s Style) {
 	otherFindings(w, rep, s)
 	degraded(w, rep, s)
 	limitations(w, rep, s)
+	footer(w, rep, s)
+}
+
+// footer restates the tool identity at the bottom of the report so a reader who
+// scrolled past the header (or is looking at a paged/piped report) still knows
+// which grokpatrol build produced it.
+func footer(w io.Writer, rep *model.Report, s Style) {
+	fmt.Fprintf(w, "%s %s  (%s/%s)  scanned in %s\n",
+		s.c(dim, "grokpatrol"), s.c(dim, rep.Tool.Version), rep.Host.GOOS, rep.Host.GOARCH, rep.Duration)
 }
 
 // curated lists every finding ID that a section above renders in its own words.
@@ -684,6 +693,9 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 					desc := fmt.Sprintf("%s (%s)", b.Path, humanBytes(b.SizeBytes))
 					if b.PathEntry != "" {
 						desc += "  " + s.c(red+bold, "<- runs when you type `grok`")
+						if b.PathEntry != b.Path {
+							desc += fmt.Sprintf("\n%s on your $PATH at %s (symlink to the file above)", pad, b.PathEntry)
+						}
 					}
 					lines = append(lines, [2]string{label, desc})
 					withheld = withheld || b.SHA256 != ""
