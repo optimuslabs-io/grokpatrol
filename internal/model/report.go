@@ -2,7 +2,9 @@ package model
 
 import "time"
 
-// Verdict is the headline. Exit codes are derived from it.
+// Verdict is the headline, carried in the report body and --json. It does NOT drive
+// the process exit code: the exit code answers only "did grokpatrol run", never "what
+// did it find" -- see ExitToolError. A caller that needs the verdict reads the report.
 type Verdict string
 
 const (
@@ -12,23 +14,9 @@ const (
 	VerdictCompromised   Verdict = "COMPROMISED"   // evidence of upload: a delivery confirmed, or an unclassifiable upload event
 )
 
-// ExitCode is the scripting contract. Note that findings never produce exit 1;
-// that code is reserved for a failure of the tool itself, so a caller can always
-// distinguish "grokpatrol broke" from "grokpatrol found something".
-func (v Verdict) ExitCode() int {
-	switch v {
-	case VerdictClean:
-		return 0
-	case VerdictIndeterminate:
-		return 2
-	case VerdictExposed:
-		return 3
-	case VerdictCompromised:
-		return 4
-	}
-	return 1
-}
-
+// ExitToolError is the only non-zero process exit code grokpatrol produces: bad flags
+// or an internal failure. A completed scan -- whatever its verdict -- exits 0; the exit
+// code cannot tell a caller what was found, only whether the tool ran. See main.run().
 const ExitToolError = 1
 
 const SchemaVersion = "grokpatrol/v1"
@@ -69,26 +57,22 @@ type Report struct {
 	StartedAt time.Time `json:"started_at"`
 	Duration  string    `json:"duration"`
 
-	Verdict  Verdict           `json:"verdict"`
-	Counts   map[string]int    `json:"counts"` // by severity name
-	Findings []Finding         `json:"findings"`
-	Repos    []RepoStatus      `json:"repos"`
-	Versions []VersionEvidence `json:"versions"`
+	Verdict Verdict `json:"verdict"`
+	// GrokPresent records whether any Grok Build artifact was actually found on this
+	// host -- an install, an upload queue, a staged archive, a version, a config, or an
+	// implicated repository. It is deliberately independent of the verdict: an
+	// INDETERMINATE (or CLEAN) result is usually "no grok, but the disk could not be
+	// fully read", yet grok can be PRESENT-but-mitigated too, and the report must never
+	// tell a host that has grok on it that none was found.
+	GrokPresent bool              `json:"grok_present"`
+	Counts      map[string]int    `json:"counts"` // by severity name
+	Findings    []Finding         `json:"findings"`
+	Repos       []RepoStatus      `json:"repos"`
+	Versions    []VersionEvidence `json:"versions"`
 
 	Errors   []ScanError `json:"errors"`
 	Degraded bool        `json:"degraded"`
 	// Limitations is populated on EVERY run, including a clean one. Nobody should
 	// read "CLEAN" without also reading what this tool structurally cannot see.
 	Limitations []string `json:"limitations"`
-}
-
-// MaxSeverity returns the highest severity among findings, and whether any exist.
-func (r *Report) MaxSeverity() (Severity, bool) {
-	max, any := SevInfo, false
-	for _, f := range r.Findings {
-		if !any || f.Severity > max {
-			max, any = f.Severity, true
-		}
-	}
-	return max, any
 }

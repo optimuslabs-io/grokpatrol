@@ -35,6 +35,7 @@ func Display(rep *model.Report, home string) {
 			e := &rep.Findings[i].Evidence[j]
 			e.Path = p(e.Path)
 			e.Source = p(e.Source)
+			e.PathEntry = p(e.PathEntry)
 			// Locator is left verbatim on purpose: it carries gs:// destinations and git
 			// blob ids, neither of which is a path on this filesystem.
 		}

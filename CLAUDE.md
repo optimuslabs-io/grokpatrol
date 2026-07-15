@@ -15,7 +15,7 @@ everything else under `internal/`.
 make build     # ./dist/grokpatrol
 make check     # what CI runs: verify-deps + gofmt + vet + race tests + cross-compile smoke
 make test      # go test -race ./...
-make demo      # build a synthetic compromised host and scan it (expect exit 4)
+make demo      # build a synthetic compromised host and scan it (expect VERDICT: COMPROMISED)
 make release   # four platforms + SHA256SUMS (runs verify-deps first)
 make fuzz      # fuzz the log parser for 60s
 make bench     # marker-scanner throughput
@@ -41,19 +41,21 @@ No Make target for a single test — use `go test -run <Name> ./internal/<pkg>/`
   file may contain a marker as a readable literal (test files may — that binary isn't shipped).
 - **A degraded scan never reports CLEAN.** A material `ScanError` sets `Report.Degraded`, forcing
   INDETERMINATE over CLEAN. Immaterial errors are reported but don't degrade the verdict.
-- **Exit 1 = tool failure, never a finding.** 0 CLEAN, 2 INDETERMINATE, 3 EXPOSED, 4 COMPROMISED.
+- **Exit code answers only "did grokpatrol run", never "what did it find."** 0 = the scan ran and
+  printed a report, whatever its verdict. 1 = a tool failure (bad flags, internal error) — never a
+  finding. The verdict itself lives in the report body and `--json`, not the exit code.
 
 ### Verdicts (`engine.verdict`, checked in this order)
 
-- **COMPROMISED (4):** a finding with `Severity >= SevHigh` **and** tagged `upload` — proof the code
+- **COMPROMISED:** a finding with `Severity >= SevHigh` **and** tagged `upload` — proof the code
   LEFT the machine: a confirmed delivery (`logs.upload_confirmed`) or an upload event the tool can't
   classify (schema drift, read as a delivery). `IsUpload()` is tag-based, deliberately independent of
   severity and strictly narrower than `IsExfil()`.
-- **EXPOSED (3):** no upload finding, but at least one finding `Severity >= SevMedium` — grok present
+- **EXPOSED:** no upload finding, but at least one finding `Severity >= SevMedium` — grok present
   and unmitigated, and/or repositories collected/queued/staged (`exfil`), but no proof of upload.
-- **INDETERMINATE (2):** no upload, nothing `>= SevMedium`, but `Report.Degraded` is set — a material
+- **INDETERMINATE:** no upload, nothing `>= SevMedium`, but `Report.Degraded` is set — a material
   `ScanError` (e.g. a directory or log the scanner couldn't read) could have hidden a finding.
-- **CLEAN (0):** none of the above.
+- **CLEAN:** none of the above.
 
 `exfil` (collection/queueing/staging) forces EXPOSED; only `upload` (confirmed or unclassifiable
 delivery) reaches COMPROMISED. Grok emits no upload-completion event today, so COMPROMISED is
@@ -90,7 +92,7 @@ delivery), not merely `exfil` (collection/queueing/staging → EXPOSED) or high 
 | `hostfs` | only filesystem access; `walk.go` handles symlink/mount-crossing policy |
 | `gitx` | only subprocess execution; read-only allowlist, scrubbed env |
 | `scan` | marker matching over candidate files, magic-byte classification |
-| `model` | findings, severities, verdicts, exit codes |
+| `model` | findings, severities, verdicts |
 | `report` | `human.go`, `json.go`, `display.go` (home-relative paths) |
 
 `detect/secrets`: uploaded set = every object reachable from HEAD (`git rev-list --objects HEAD`)

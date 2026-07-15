@@ -116,7 +116,17 @@ func inBinDir(path string) bool {
 
 // IsGrokBinaryName forces a file into the content scan regardless of its header.
 // If it is literally called grok, we read it.
+// GrokCommandNames are the filenames the grok command is invoked as -- the entries
+// to look for on $PATH when deciding which discovered install actually runs. Kept as
+// one list so the walk's name filter and the $PATH probe cannot drift apart.
+var GrokCommandNames = []string{"grok", "grok.exe"}
+
 func IsGrokBinaryName(name string) bool {
 	n := strings.ToLower(name)
-	return n == "grok" || n == "grok.exe"
+	for _, c := range GrokCommandNames {
+		if n == c {
+			return true
+		}
+	}
+	return false
 }

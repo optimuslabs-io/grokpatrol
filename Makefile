@@ -129,14 +129,14 @@ check: verify-deps
 # There is no real Grok install to test against, so the compromised case has to be
 # constructed. This builds a synthetic host with every host-side indicator planted --
 # including a repo whose secrets were committed and then deleted -- and scans it.
-## demo: build a synthetic compromised host and scan it (expect COMPROMISED, exit 4)
+## demo: build a synthetic compromised host and scan it (expect VERDICT: COMPROMISED)
 .PHONY: demo
 demo: build
 	@./testdata/make_fakehome.sh $(FAKEHOME) >/dev/null
 	@echo "synthetic compromised host: $(FAKEHOME)"
 	@echo
-	@$(DIST)/$(BIN) --home $(FAKEHOME) --grok-home $(FAKEHOME)/.grok || \
-	  echo "exit=$$?  (4 = COMPROMISED, which is the expected result here)"
+	@$(DIST)/$(BIN) --home $(FAKEHOME) --grok-home $(FAKEHOME)/.grok; \
+	  echo "exit=$$?  (0 = the scan ran; the verdict above should read COMPROMISED)"
 
 # --- cleanup -----------------------------------------------------------------
 

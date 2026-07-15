@@ -41,6 +41,12 @@ type Env struct {
 	// this between phases, which is why secrets runs last.
 	SeedRepos []string
 
+	// PathDirs is the host's $PATH, split into ordered directories, captured once at
+	// startup. deepscan uses it to resolve which discovered install the grok command
+	// actually runs -- the file that executes when the user types `grok`. Ordered
+	// because the shell searches $PATH left to right and the first match wins.
+	PathDirs []string
+
 	// Discovered is filled by the deepscan phase and read by every later phase.
 	// It is the reason the phases are ordered rather than fully parallel: a stray
 	// .grok found under ~/work has logs and a config of its own, and those must be

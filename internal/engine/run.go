@@ -216,6 +216,7 @@ func finalize(rep *model.Report, env *Env, elapsed time.Duration) {
 		rep.Counts[f.Severity.String()]++
 	}
 
+	rep.GrokPresent = grokFound(rep, env)
 	rep.Verdict = verdict(rep)
 	rep.Limitations = append(rep.Limitations, standingLimitations(env)...)
 	rep.Limitations = dedupeStrings(rep.Limitations)
@@ -248,6 +249,43 @@ func verdict(rep *model.Report) model.Verdict {
 	default:
 		return model.VerdictClean
 	}
+}
+
+// grokFound reports whether any Grok Build artifact was actually discovered on this
+// host. It is the report-layer signal behind Report.GrokPresent and gates the wording
+// that states grok's absence outright.
+//
+// The check is authoritative rather than findings-shaped where it can be: env.Discovered
+// is deepscan's own inventory, and Installs()/UploadQueues/Archives/RepoHints are counted
+// there directly -- deliberately NOT GrokHomes, which always carries the configured home
+// whether or not it exists on disk and would read as "present" on every clean host. The
+// findings sweep then covers what Discovered does not: a config detector finding fires
+// only once a grok home, config.toml or cached credential was found, and a binary_marker
+// means a marker-carrying executable is on disk. Either is proof grok is here.
+func grokFound(rep *model.Report, env *Env) bool {
+	d := env.Discovered
+	if len(d.Installs()) > 0 || len(d.UploadQueues) > 0 || len(d.Archives) > 0 || len(d.RepoHints) > 0 {
+		return true
+	}
+	if len(rep.Repos) > 0 {
+		return true
+	}
+	// A version counts as presence only at the same evidentiary bar versionBanner
+	// displays one: NOT "low", which means a semver scraped from a marker-carrying text
+	// file's string table (an IoC list, notes, another scanner). deepscan classifies
+	// those files as "not a Grok install", so a host whose only grok-shaped signal is one
+	// of them is grok-absent, and must still get the plain "no grok" headline.
+	for _, v := range rep.Versions {
+		if v.Confidence != "low" {
+			return true
+		}
+	}
+	for _, f := range rep.Findings {
+		if f.Detector == "config" || f.ID == "deepscan.binary_marker" {
+			return true
+		}
+	}
+	return false
 }
 
 func standingLimitations(env *Env) []string {

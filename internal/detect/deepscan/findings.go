@@ -2,6 +2,7 @@ package deepscan
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
@@ -22,8 +23,17 @@ func findings(d *engine.Discovered, env *engine.Env) []model.Finding {
 	}
 
 	if len(installs) > 0 {
+		// Which of these is the grok that actually runs when the user types `grok`? That
+		// is the one on $PATH, and on a host with several copies on disk it is the one the
+		// report must surface first. activeEntry is the $PATH location; it is empty when no
+		// grok is on $PATH, or when the one that is was not among the discovered installs.
+		activeFile, activeEntry := activeInstall(installs, env)
 		var ev []model.Evidence
 		for _, b := range installs {
+			entry := ""
+			if activeEntry != "" && b.Path == activeFile {
+				entry = activeEntry
+			}
 			for _, m := range b.Markers {
 				ev = append(ev, model.Evidence{
 					Path:      b.Path,
@@ -31,6 +41,7 @@ func findings(d *engine.Discovered, env *engine.Env) []model.Finding {
 					Note:      "contains marker " + m.Marker,
 					SHA256:    b.SHA256,
 					SizeBytes: b.SizeBytes,
+					PathEntry: entry,
 				})
 			}
 		}
@@ -94,4 +105,29 @@ func findings(d *engine.Discovered, env *engine.Env) []model.Finding {
 	}
 
 	return out
+}
+
+// activeInstall returns the discovered install the grok command resolves to on $PATH
+// -- the file that runs when the user types `grok` -- and the $PATH entry that points
+// at it. It returns empty strings when no grok is on $PATH, or when the one that is was
+// not among the discovered installs: a $PATH directory the walk did not cover, or a
+// symlink target outside the scanned roots. In that case there is nothing to highlight,
+// and the caller must not invent a row for a file it never inspected.
+//
+// Matching is by RESOLVED path, cleaned on both sides: the $PATH entry is typically a
+// symlink and its real target is what deepscan recorded when it walked the file.
+func activeInstall(installs []engine.BinaryHit, env *engine.Env) (file, entry string) {
+	e, resolved, ok := hostfs.ResolveOnPath(env.PathDirs, scan.GrokCommandNames)
+	if !ok {
+		return "", ""
+	}
+	want := filepath.Clean(resolved)
+	for _, b := range installs {
+		// Either match: resolved == the walked file, or the $PATH entry is itself the
+		// discovered file (a real binary on $PATH the walk reached directly).
+		if filepath.Clean(b.Path) == want || filepath.Clean(b.Path) == filepath.Clean(e) {
+			return b.Path, e
+		}
+	}
+	return "", ""
 }
