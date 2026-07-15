@@ -1,8 +1,15 @@
-# Pushing a tag `vX.Y.Z` builds all six platforms and publishes a GitHub
-# release. One ubuntu runner is enough: every build is a CGO_ENABLED=0
-# cross-compile, so a macOS runner would buy nothing short of codesigning
-# (deliberately deferred -- the curl and `go install` install paths never set
-# com.apple.quarantine, so Gatekeeper never engages).
+# Every merge to main is a release: this workflow reads the latest vX.Y.Z tag,
+# bumps the patch number, and -- only if `make check` passes on the new commit --
+# tags, builds, and publishes it. Nobody picks a version number by hand; a commit
+# that fails check never consumes one. A deliberate major/minor bump still works
+# the old way: push an exact `vX.Y.Z` tag yourself, and the next auto-release
+# picks up from there since the "latest tag" lookup is a real version sort, not a
+# counter this workflow owns.
+#
+# One ubuntu runner is enough: every build is a CGO_ENABLED=0 cross-compile, so a
+# macOS runner would buy nothing short of codesigning (deliberately deferred --
+# the curl and `go install` install paths never set com.apple.quarantine, so
+# Gatekeeper never engages).
 #
 # Trust properties this workflow provides, in decreasing order of strength:
 #   1. Sigstore provenance (attest-build-provenance): cryptographic proof,
@@ -20,21 +27,28 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: read
+
+# Merges can land close together; run releases one at a time so the "latest
+# tag" lookup always sees the previous run's tag rather than racing it.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # create the release and upload assets
+      contents: write      # create the tag, the release, and upload assets
       id-token: write      # sigstore signing identity
       attestations: write  # store the provenance attestation
     steps:
-      # fetch-depth: 0 so `git describe --tags` sees the tag; the Makefile
-      # stamps VERSION from it, and the artifact names embed it.
+      # fetch-depth: 0 for the full tag history the version bump reads, and so
+      # `git describe --tags` (which the Makefile uses to stamp VERSION) sees
+      # the tag this workflow is about to create.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
@@ -44,10 +58,37 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      # The release gate: a tag that fails check publishes nothing.
+      - name: Compute next version
+        id: version
+        run: |
+          latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)"
+          if [ -z "$latest" ]; then
+            next=v0.1.0
+          else
+            ver="${latest#v}"
+            major="${ver%%.*}"
+            rest="${ver#*.}"
+            minor="${rest%%.*}"
+            patch="${rest#*.}"
+            next="v${major}.${minor}.$((patch + 1))"
+          fi
+          echo "latest=$latest next=$next" >&2
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+
+      # The release gate: a commit that fails check is never tagged, and never
+      # spends a version number.
       - run: make check
 
+      - name: Tag ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
       # Commit time as the build timestamp makes the stamped Date reproducible.
+      # VERSION is not passed explicitly: the tag just pushed above is on this
+      # exact commit, so the Makefile's own `git describe --tags` resolves to it.
       - run: SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) make release
 
       - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -57,8 +98,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "${{ steps.version.outputs.tag }}" \
             dist/grokpatrol_* dist/SHA256SUMS \
             --verify-tag \
-            --title "$GITHUB_REF_NAME" \
+            --title "${{ steps.version.outputs.tag }}" \
             --generate-notes
