@@ -220,8 +220,13 @@ func ingest(path string, events *[]event, rawHits *[]model.Evidence, versions ma
 	if strings.HasSuffix(strings.ToLower(path), ".gz") {
 		gz, gerr := gzip.NewReader(f)
 		if gerr != nil {
+			// MATERIAL: a .gz we cannot open is a log we read ZERO bytes of -- strictly
+			// worse than the truncation case below, which at least yields readable bytes.
+			// A corrupt, header-truncated, or misnamed-plaintext .gz that held the only
+			// enqueue event would otherwise be skipped without degrading the verdict, and
+			// the host would come back CLEAN on evidence the tool simply could not read.
 			res.Errors = append(res.Errors, model.ScanError{
-				Detector: "logs", Kind: "io", Path: path,
+				Detector: "logs", Kind: "io", Path: path, Material: true,
 				Message: "gzip open failed: " + gerr.Error(),
 			})
 			return

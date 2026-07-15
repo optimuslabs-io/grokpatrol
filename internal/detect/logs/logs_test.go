@@ -73,6 +73,40 @@ func hasFinding(res engine.Result, id string) bool {
 	return false
 }
 
+// A .gz log the tool cannot decompress must DEGRADE the scan, not pass silently.
+//
+// gzip.NewReader failing means zero bytes were read from that file -- strictly worse
+// than a truncated-but-readable log. If the failure is not material, Report.Degraded
+// stays false and a host whose only evidence sat in a corrupt (or misnamed-plaintext)
+// rotated log comes back CLEAN. This is the worst failure the tool can have, so the
+// error must be marked material.
+func TestUnreadableGzipDegradesTheScan(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".grok", "logs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A .gz that is not valid gzip: plaintext someone renamed, or a header-truncated
+	// archive. gzip.NewReader rejects it before a single byte is read.
+	if err := os.WriteFile(filepath.Join(dir, "unified.jsonl.1.gz"), []byte("this is not gzip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := run(t, home)
+
+	var material *model.ScanError
+	for i := range res.Errors {
+		if strings.HasSuffix(res.Errors[i].Path, "unified.jsonl.1.gz") && res.Errors[i].Material {
+			material = &res.Errors[i]
+			break
+		}
+	}
+	if material == nil {
+		t.Fatalf("the unreadable .gz produced no MATERIAL error, so the scan would not degrade "+
+			"and a host with only this (unreadable) evidence would report CLEAN; errors=%+v", res.Errors)
+	}
+}
+
 // The single most important correctness test in the package.
 //
 // A start event and its enqueue routinely land in DIFFERENT files, because the

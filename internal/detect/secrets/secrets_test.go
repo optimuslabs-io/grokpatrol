@@ -308,6 +308,68 @@ func TestTemplateFilterDoesNotSwallowRealSecrets(t *testing.T) {
 	}
 }
 
+// A directory whose NAME is secret-shaped must never be reported as a secret file.
+//
+// `git rev-list --objects HEAD` emits tree (directory) objects with their paths, so a
+// folder called secrets/ lands in the history set; `git ls-tree -r` lists files only,
+// so it is never in the checkout set. Without the tree filter the directory survives
+// the subtraction and is reported as a SevCritical "deleted from the checkout" secret,
+// with a blob id that resolves to a directory listing -- a fabricated finding that
+// forces EXPOSED on any repo that merely has a secrets/ folder. grokpatrol would flag
+// its own source tree (internal/detect/secrets) this way.
+func TestDirectoryNamedLikeASecretIsNotFlagged(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
+	)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = dir, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run("init", "-q", "--initial-branch=main")
+	// A secret-named DIRECTORY holding only non-secret source, plus a genuine secret
+	// FILE inside it that later gets deleted -- so the fix must drop the directory while
+	// still surfacing the file.
+	write("secrets/loader.go", "package secrets\n")
+	write("secrets/prod.env", "DATABASE_URL=postgres://u:hunter2@prod/db\n")
+	run("add", "-A")
+	run("commit", "-q", "-m", "initial")
+	run("rm", "-q", "secrets/prod.env")
+	run("commit", "-q", "-m", "delete the env, keep it in history")
+
+	st := runDetector(t, dir, true)
+
+	if h := hitFor(st, "secrets"); h != nil {
+		t.Errorf("the DIRECTORY %q was reported as a secret (%s, deleted=%v) -- a tree object "+
+			"leaked through the history/checkout subtraction", "secrets", h.Class, h.DeletedFromCheckout)
+	}
+	// The real deleted secret inside it must still be found: the fix removes directories,
+	// not the files under them.
+	if h := hitFor(st, "secrets/prod.env"); h == nil || !h.DeletedFromCheckout {
+		t.Errorf("the genuine deleted secret secrets/prod.env was lost by the tree filter: %+v", h)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	cases := map[string]string{
 		".env":                        ClassDotenv,

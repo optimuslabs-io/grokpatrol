@@ -249,7 +249,27 @@ func historySet(ctx context.Context, env *engine.Env, repo string) (hits []model
 		return nil, 0, err
 	}
 
+	// `git rev-list --objects` emits TREE (directory) objects as well as blobs, while
+	// the ls-tree below lists files only. A directory whose name is secret-shaped
+	// (secrets/, app-secrets/) would therefore land in `history`, never appear in
+	// headSet, and be reported as "deleted from the checkout" -- a fabricated
+	// SevCritical finding whose blob id points at a tree, so the `git cat-file -p` we
+	// invite the user to run prints a directory listing. We cannot ask git to type-tag
+	// the objects (cat-file is off the allowlist by design), but we do not need to: a
+	// directory path is always a strict ancestor of some other path in the listing,
+	// and a file path never is. dirs collects those ancestors so they can be skipped.
+	dirs := map[string]bool{}
+	for p := range history {
+		for i := strings.LastIndexByte(p, '/'); i >= 0; i = strings.LastIndexByte(p, '/') {
+			p = p[:i]
+			dirs[p] = true
+		}
+	}
+
 	for p, blob := range history {
+		if dirs[p] {
+			continue // a directory object, not a file: never a secret to rotate
+		}
 		class := Classify(p)
 		if class == "" {
 			continue
