@@ -319,7 +319,10 @@ func findings(queues, metadata []string, archives []engine.ArchiveFile, sizes ma
 		out = append(out, model.Finding{
 			ID:       "queue.metadata_bucket",
 			Detector: "queue",
-			Severity: model.SevCritical,
+			// SevHigh + TagExfil, never TagUpload: a manifest naming the bucket proves an
+			// upload was PREPARED with a concrete destination -- staging, not delivery.
+			// That is EXPOSED. Only a confirmed delivery reaches COMPROMISED.
+			Severity: model.SevHigh,
 			Tags:     []string{model.TagExfil, model.TagStaging},
 			Title:    fmt.Sprintf("%d staged manifests point at gs://%s/", len(metadata), scan.MarkerBucket),
 			Detail: "A metadata.json mapping your local files to destination paths inside the exfiltration bucket means an " +

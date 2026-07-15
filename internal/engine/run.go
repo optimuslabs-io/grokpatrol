@@ -226,17 +226,20 @@ func finalize(rep *model.Report, env *Env, elapsed time.Duration) {
 // half your disk and found nothing" is not the same statement as "there is
 // nothing here".
 func verdict(rep *model.Report) model.Verdict {
-	exfil, exposure := false, false
+	upload, exposure := false, false
 	for _, f := range rep.Findings {
-		if f.Severity >= model.SevHigh && f.IsExfil() {
-			exfil = true
+		// COMPROMISED asserts the code LEFT the machine. Collection and queueing
+		// (IsExfil) are not enough -- only a confirmed or unclassifiable delivery
+		// (IsUpload) clears this bar. A queued-but-undelivered host is EXPOSED.
+		if f.Severity >= model.SevHigh && f.IsUpload() {
+			upload = true
 		}
 		if f.Severity >= model.SevMedium {
 			exposure = true
 		}
 	}
 	switch {
-	case exfil:
+	case upload:
 		return model.VerdictCompromised
 	case exposure:
 		return model.VerdictExposed

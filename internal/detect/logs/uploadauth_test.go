@@ -66,12 +66,13 @@ func TestUploadAuthFailuresNeverDowngradeTheVerdict(t *testing.T) {
 		t.Errorf("UploadAuthFailures = %d, want 3", r.UploadAuthFailures)
 	}
 	if !hasFinding(res, "logs.archive_enqueued") {
-		t.Error("the CRITICAL exfil finding vanished when 401s were present -- this is the false negative the tool exists to prevent")
+		t.Error("the high-severity exfil finding vanished when 401s were present -- this is the false negative the tool exists to prevent")
 	}
 
-	// The exfil finding must still be the one that drives the verdict.
+	// The exfil finding must still force EXPOSED. A refused delivery does not clear the
+	// collection that already happened, so the verdict must not slide below it.
 	if sev, ok := exfilSeverity(res); !ok || sev < model.SevHigh {
-		t.Errorf("no exfil-tagged finding at >= SevHigh survived; verdict would not be COMPROMISED")
+		t.Errorf("no exfil-tagged finding at >= SevHigh survived; verdict would fall below EXPOSED")
 	}
 }
 

@@ -8,8 +8,8 @@ const (
 	SevInfo     Severity = iota // context, not a problem
 	SevLow                      // hygiene / weak signal
 	SevMedium                   // grok present and unmitigated: exposed, no proof of upload
-	SevHigh                     // strong IoC: populated upload_queue, marker in binary, collection events
-	SevCritical                 // proof of exfiltration: an archive was enqueued for a real repo
+	SevHigh                     // strong IoC: populated upload_queue, marker in binary, an archive collected/enqueued/staged
+	SevCritical                 // proof of upload: a delivery to xAI was confirmed, or an upload event we cannot classify
 )
 
 var sevNames = map[Severity]string{
@@ -77,10 +77,11 @@ type Finding struct {
 	Evidence    []Evidence `json:"evidence,omitempty"`
 }
 
-// IsExfil reports whether this finding is evidence that collection or upload
-// actually happened, as opposed to mere exposure. It drives the COMPROMISED
-// verdict, so it is deliberately tag-based rather than severity-based: a High
-// config finding is not proof of exfiltration.
+// IsExfil reports whether this finding is evidence that collection, staging, or
+// upload of a repository happened, as opposed to mere exposure. It is tag-based
+// rather than severity-based, and it is what separates EXPOSED from a merely
+// present-but-idle grok. It does NOT by itself drive COMPROMISED -- see IsUpload:
+// a queued archive is collection, not proof the bytes left the machine.
 func (f Finding) IsExfil() bool {
 	for _, t := range f.Tags {
 		if t == TagExfil {
@@ -90,8 +91,26 @@ func (f Finding) IsExfil() bool {
 	return false
 }
 
+// IsUpload reports whether this finding is evidence that a repository was actually
+// UPLOADED -- bytes confirmed delivered to xAI, or an upload event the tool cannot
+// classify (read as a delivery, failing safe). It drives the COMPROMISED verdict,
+// so it is deliberately tag-based and strictly narrower than IsExfil: collection
+// and queueing are exposure; only a proven (or unclassifiable) delivery is
+// COMPROMISED. Grok emits no upload-completion event today, so on the current
+// schema this is reachable only via the schema-drift findings -- which is the
+// point: COMPROMISED asserts the code left the machine, and nothing weaker does.
+func (f Finding) IsUpload() bool {
+	for _, t := range f.Tags {
+		if t == TagUpload {
+			return true
+		}
+	}
+	return false
+}
+
 const (
-	TagExfil   = "exfil"
+	TagExfil   = "exfil"  // collection/queueing/staging happened -> EXPOSED
+	TagUpload  = "upload" // a delivery was confirmed or is the safe reading -> COMPROMISED
 	TagStaging = "staging"
 	TagConfig  = "config"
 	TagInstall = "install"

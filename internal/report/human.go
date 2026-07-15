@@ -266,11 +266,29 @@ func verdictBanner(w io.Writer, rep *model.Report, s Style) {
 	var color, headline string
 	switch rep.Verdict {
 	case model.VerdictCompromised:
-		color, headline = red, compromisedHeadline(rep)
+		color = red
+		// COMPROMISED means a delivery is proven. Only the delivered branch of
+		// exfilHeadline may render here: its queued/collected branches say "delivery
+		// UNCONFIRMED", which is a direct contradiction under this verdict -- and that
+		// case is reachable, because a schema-drift upload signal (TagUpload) can promote
+		// a host whose repos were merely queued or collected. When no repo was confirmed
+		// delivered, the signal is a changed log schema, so say exactly that.
+		if hasDelivered(rep) {
+			headline = exfilHeadline(rep)
+		} else {
+			headline = "An upload event was found in Grok's logs, but the log schema has changed and no\n" +
+				"confirmed delivery could be attributed to a repository. Treat this as evidence of\n" +
+				"upload and rotate every repository this machine touched."
+		}
 	case model.VerdictExposed:
 		color = yellow
-		headline = "The Grok Build CLI is present and whole-repository upload is not disabled.\n" +
-			"No evidence was found that it has uploaded anything from this machine yet."
+		// A collected-or-queued host is now EXPOSED (delivery unproven), and its
+		// collection facts are the most actionable line in the report -- lead with them.
+		// Only an install-only host (grok present, nothing collected) gets the generic line.
+		if headline = exfilHeadline(rep); headline == "" {
+			headline = "The Grok Build CLI is present and whole-repository upload is not disabled.\n" +
+				"No evidence was found that it has uploaded anything from this machine yet."
+		}
 	case model.VerdictIndeterminate:
 		color = yellow
 		headline = "No indicators were found, but parts of this machine could not be read.\n" +
@@ -311,7 +329,27 @@ func countsLine(rep *model.Report) string {
 	return strings.Join(parts, ", ")
 }
 
-func compromisedHeadline(rep *model.Report) string {
+// hasDelivered reports whether any repository's upload was confirmed landed. It
+// gates the COMPROMISED banner: only a confirmed delivery may render the "in xAI's
+// possession" wording, never a queued-or-collected repo promoted by a schema-drift
+// upload signal.
+func hasDelivered(rep *model.Report) bool {
+	for _, r := range rep.Repos {
+		if r.Status == model.StatusDelivered {
+			return true
+		}
+	}
+	return false
+}
+
+// exfilHeadline describes what was collected, queued, or delivered, strongest
+// evidence first. It renders under BOTH verdicts: COMPROMISED (a confirmed
+// delivery) and EXPOSED (collection or queueing with no proof of delivery). On
+// either, the collection facts are the most actionable thing in the report, so the
+// banner must lead with them rather than bury them under a generic line. Returns ""
+// when no repository was implicated, leaving the caller to supply a
+// verdict-appropriate fallback.
+func exfilHeadline(rep *model.Report) string {
 	queued, collected, archives := 0, 0, 0
 	delivered, confirmed := 0, 0
 	for _, r := range rep.Repos {
@@ -350,12 +388,12 @@ func compromisedHeadline(rep *model.Report) string {
 		// saw. Overclaiming on the headline is how a report loses the reader who checks
 		// it -- and this report's whole authority is that everything in it is checkable.
 		//
-		// The verdict does NOT soften with the wording, and must not. COMPROMISED rests
-		// on collection, not delivery: these repositories were read and packaged, which
-		// is proven, and the rotation advice follows from that alone. Requiring proven
-		// delivery would make COMPROMISED unreachable on every host forever, since the
-		// event that would prove it does not exist -- a verdict nothing can trigger is
-		// not a cautious verdict, it is a disabled one.
+		// This is an EXPOSED headline, not a COMPROMISED one: collection and queueing
+		// are proven, delivery is not, and the verdict says exactly that. What the
+		// wording must NOT do is soften the collection facts or read as reassurance --
+		// these repositories were read and packaged, and the rotation advice follows
+		// from that alone. COMPROMISED is reserved for a confirmed (or unclassifiable)
+		// delivery; a queued-but-undelivered host is EXPOSED, and must still rotate.
 		return fmt.Sprintf(
 			"%s collected and %s built and queued for upload to %s.\n"+
 				"Delivery is UNCONFIRMED -- Grok logs no upload-completion event -- but it is not\n"+
@@ -367,7 +405,10 @@ func compromisedHeadline(rep *model.Report) string {
 			"%d repositories were collected by Grok. Whether the upload completed is unconfirmed,\n"+
 				"which is not the same as disproven: the enqueue records may simply have rotated away.", collected)
 	default:
-		return "Evidence of repository collection was found on this machine."
+		// No repository was implicated by the ledger or the queue. The caller supplies
+		// a fallback appropriate to the verdict (a schema-drift upload signal under
+		// COMPROMISED, an install-only host under EXPOSED).
+		return ""
 	}
 }
 

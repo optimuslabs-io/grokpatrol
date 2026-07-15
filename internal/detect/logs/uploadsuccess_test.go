@@ -11,9 +11,11 @@ import (
 
 // Delivery confirmation is the one signal grokpatrol has never been able to get: no
 // Grok build emits an upload-completion event, the upload events carry no status
-// field, and the client that performs the PUT logs only its 401s. So this whole
-// feature is an UPGRADE PATH for a schema that does not exist yet, and the tests that
-// matter most are the ones proving it stays an upgrade and never becomes a gate.
+// field, and the client that performs the PUT logs only its 401s. It is also the GATE
+// for COMPROMISED: that verdict asserts the code left the machine, so it fires only on
+// a confirmed (or unclassifiable) delivery. The tests that matter most are the ones
+// proving a queued-but-undelivered host still reports EXPOSED -- collection is never
+// waved off, it just is not COMPROMISED without proof the bytes landed.
 
 func runLines(t *testing.T, lines ...string) engine.Result {
 	t.Helper()
@@ -34,9 +36,10 @@ func repoRow(t *testing.T, res engine.Result, path string) model.RepoStatus {
 // THE REGRESSION GUARD, and the reason the whole feature is safe.
 //
 // A host with archives queued and NO completion event -- which is every real host --
-// must be exactly as compromised as it was before this feature existed. If adding a
-// delivery signal ever makes the ABSENCE of that signal read as reassurance, the tool
-// has been turned into a false-negative machine on the only hosts it will ever run on.
+// must report EXPOSED: collection is proven, so its credentials still have to be
+// rotated. What it must NOT do is read as reassurance (a queued archive can never
+// vanish or drop below EXPOSED), and it must NOT falsely read as COMPROMISED -- that
+// verdict is reserved for proof the bytes landed, which this host does not have.
 func TestAbsentSuccessNeverDowngrades(t *testing.T) {
 	res := runLines(t,
 		`{"msg":"`+eventStart+`","sid":"s1","ctx":{"turn_number":0,"repo_path":"/work/api"},"ts":"2026-06-12T10:00:00Z"}`,
@@ -54,11 +57,13 @@ func TestAbsentSuccessNeverDowngrades(t *testing.T) {
 
 	f := finding(res, "logs.archive_enqueued")
 	if f == nil {
-		t.Fatal("logs.archive_enqueued vanished: the exfil finding that carries the verdict must not " +
+		t.Fatal("logs.archive_enqueued vanished: the exfil finding that forces EXPOSED must not " +
 			"depend on a completion event Grok has no code path to write")
 	}
-	if !f.IsExfil() || f.Severity < model.SevHigh {
-		t.Errorf("archive_enqueued = %v/%v, want exfil at SevHigh+ so it still promotes to COMPROMISED",
+	// exfil (forces EXPOSED) at SevHigh+, but NOT upload: a queued archive is collection,
+	// and collection alone must never reach COMPROMISED.
+	if !f.IsExfil() || f.IsUpload() || f.Severity < model.SevHigh {
+		t.Errorf("archive_enqueued = %v/%v, want exfil-not-upload at SevHigh+ so it forces EXPOSED, never COMPROMISED",
 			f.Severity, f.Tags)
 	}
 	if finding(res, "logs.upload_confirmed") != nil {
@@ -90,8 +95,9 @@ func TestNamedCompletionEventConfirmsDelivery(t *testing.T) {
 	if f == nil {
 		t.Fatal("logs.upload_confirmed did not fire on a named completion event")
 	}
-	if f.Severity != model.SevCritical || !f.IsExfil() {
-		t.Errorf("finding = %v/%v, want Critical+exfil", f.Severity, f.Tags)
+	// Critical + upload: this is the finding that drives COMPROMISED.
+	if f.Severity != model.SevCritical || !f.IsUpload() {
+		t.Errorf("finding = %v/%v, want Critical+upload so it drives COMPROMISED", f.Severity, f.Tags)
 	}
 
 	// A delivered repo is still a queued repo. Promoting it must not delete the finding
