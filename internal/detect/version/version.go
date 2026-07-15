@@ -38,13 +38,18 @@ func (*Detector) Describe() string {
 }
 
 func summarize(vs []model.VersionEvidence) string {
+	// Skip low confidence, exactly as findings() (a semver scraped from the bundle is
+	// as likely a dependency's as grok's) and both report banners do. Without this the
+	// stderr progress line would announce "0.2.93 -- CONFIRMED AFFECTED" off a single
+	// low-confidence binary string while the finding and the banners correctly stay
+	// silent -- the loudest claim in the tool, made on its weakest evidence.
 	for _, v := range vs {
-		if v.Class == model.VersionConfirmedAffected {
+		if v.Confidence != "low" && v.Class == model.VersionConfirmedAffected {
 			return v.Version + " -- CONFIRMED AFFECTED"
 		}
 	}
 	for _, v := range vs {
-		if v.Class == model.VersionReportedAffected {
+		if v.Confidence != "low" && v.Class == model.VersionReportedAffected {
 			return v.Version + " -- REPORTED AFFECTED"
 		}
 	}
