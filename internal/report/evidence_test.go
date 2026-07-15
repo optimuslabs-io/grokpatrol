@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 func turn(n int64) *int64 { return &n }

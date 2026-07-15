@@ -5,9 +5,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
-	"github.com/optimuslabs/grokpatrol/internal/scan"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/scan"
 )
 
 const rotateAdvice = "Treat every credential reachable from this repository's git history as compromised and rotate it. " +

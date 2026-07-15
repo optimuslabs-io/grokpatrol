@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // runEnv runs the detector against an Env the caller built, so a test can set

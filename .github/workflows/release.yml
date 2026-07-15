@@ -1,0 +1,64 @@
+# Pushing a tag `vX.Y.Z` builds all six platforms and publishes a GitHub
+# release. One ubuntu runner is enough: every build is a CGO_ENABLED=0
+# cross-compile, so a macOS runner would buy nothing short of codesigning
+# (deliberately deferred -- the curl and `go install` install paths never set
+# com.apple.quarantine, so Gatekeeper never engages).
+#
+# Trust properties this workflow provides, in decreasing order of strength:
+#   1. Sigstore provenance (attest-build-provenance): cryptographic proof,
+#      recorded in a transparency log outside this repo, that each binary was
+#      built by this workflow from this commit. Verify with:
+#        gh attestation verify <binary> -R optimuslabs-io/grokpatrol
+#   2. Reproducibility: -trimpath, -buildvcs=false, and SOURCE_DATE_EPOCH
+#      pinned to the commit time mean anyone can rebuild the tag and diff.
+#   3. SHA256SUMS: integrity of the download, not authenticity -- it lives
+#      next to the binaries it describes.
+#
+# The release is published with the preinstalled `gh` CLI rather than a
+# third-party release action, matching the project's no-dependency ethos.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the release and upload assets
+      id-token: write      # sigstore signing identity
+      attestations: write  # store the provenance attestation
+    steps:
+      # fetch-depth: 0 so `git describe --tags` sees the tag; the Makefile
+      # stamps VERSION from it, and the artifact names embed it.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # The release gate: a tag that fails check publishes nothing.
+      - run: make check
+
+      # Commit time as the build timestamp makes the stamped Date reproducible.
+      - run: SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) make release
+
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: dist/grokpatrol_*
+
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/grokpatrol_* dist/SHA256SUMS \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

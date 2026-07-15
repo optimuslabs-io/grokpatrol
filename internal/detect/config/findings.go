@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // remediationText prints both settings, because both are required.

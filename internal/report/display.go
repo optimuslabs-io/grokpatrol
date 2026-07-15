@@ -1,8 +1,8 @@
 package report
 
 import (
-	"github.com/optimuslabs/grokpatrol/internal/hostfs"
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // Display renders every host path in the report the way a person should read it:

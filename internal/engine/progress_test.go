@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	cfgdet "github.com/optimuslabs/grokpatrol/internal/detect/config"
-	"github.com/optimuslabs/grokpatrol/internal/detect/deepscan"
-	"github.com/optimuslabs/grokpatrol/internal/detect/logs"
-	"github.com/optimuslabs/grokpatrol/internal/detect/queue"
-	"github.com/optimuslabs/grokpatrol/internal/detect/secrets"
-	"github.com/optimuslabs/grokpatrol/internal/detect/version"
-	"github.com/optimuslabs/grokpatrol/internal/engine"
+	cfgdet "github.com/optimuslabs-io/grokpatrol/internal/detect/config"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/deepscan"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/logs"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/queue"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/secrets"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/version"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 )
 
 func allDetectors() []engine.Detector {

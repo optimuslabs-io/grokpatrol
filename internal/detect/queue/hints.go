@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/optimuslabs/grokpatrol/internal/hostfs"
+	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
 )
 
 // repoRootCache memoizes the two things that made manifest parsing quadratic on a

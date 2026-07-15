@@ -7,7 +7,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/optimuslabs/grokpatrol/internal/hostfs"
+	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
 )
 
 // chunkSize is the read granularity. At this size bytes.Index is memory-bandwidth

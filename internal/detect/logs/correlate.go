@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // key pairs a start event with its enqueue events. turn_number may be absent, in

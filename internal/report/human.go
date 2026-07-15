@@ -7,9 +7,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
-	"github.com/optimuslabs/grokpatrol/internal/scan"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/scan"
 )
 
 type Style struct {

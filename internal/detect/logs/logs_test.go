@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // grokHome builds a fake ~/.grok/logs containing the given files. Fixtures are

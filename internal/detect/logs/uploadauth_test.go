@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // The upload leg is the client that PUTs the archives. The telemetry client 401s

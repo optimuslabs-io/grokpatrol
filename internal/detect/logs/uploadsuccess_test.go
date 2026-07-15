@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
-	"github.com/optimuslabs/grokpatrol/internal/scan"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/scan"
 )
 
 // Delivery confirmation is the one signal grokpatrol has never been able to get: no

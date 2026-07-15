@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // Semver matches a bare version, with or without a leading v.

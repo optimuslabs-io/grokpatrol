@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 func findings(repos []model.RepoStatus) []model.Finding {

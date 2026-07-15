@@ -21,11 +21,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/grokver"
-	"github.com/optimuslabs/grokpatrol/internal/hostfs"
-	"github.com/optimuslabs/grokpatrol/internal/model"
-	"github.com/optimuslabs/grokpatrol/internal/scan"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/grokver"
+	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/scan"
 )
 
 // The bucket name and the archive suffix are searched for in the RAW bytes of

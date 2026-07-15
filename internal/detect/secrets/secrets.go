@@ -22,9 +22,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/gitx"
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/gitx"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 type Detector struct{}

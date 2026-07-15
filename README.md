@@ -19,16 +19,71 @@ is left on this disk, which repos were taken, and what do I have to rotate?**
 
 ## Install
 
-Download a binary for your platform from the release artifacts, or build it:
+No dependencies, no install step, nothing to configure — the binary is the whole tool.
+Three ways to get it, most verifiable first. This is a forensic tool; pick your level
+of paranoia deliberately.
+
+### 1. Download and verify (recommended)
+
+Grab the binary for your platform plus `SHA256SUMS` from the
+[releases page](https://github.com/optimuslabs-io/grokpatrol/releases), then:
+
+```sh
+shasum -a 256 -c --ignore-missing SHA256SUMS      # sha256sum on Linux
+
+# Prove the binary was built by this repo's release workflow (sigstore):
+gh attestation verify grokpatrol_v0.1.0_darwin_arm64 -R optimuslabs-io/grokpatrol
+
+chmod +x grokpatrol_v0.1.0_darwin_arm64 && mv grokpatrol_v0.1.0_darwin_arm64 /usr/local/bin/grokpatrol
+```
+
+The checksum proves the download arrived intact. The attestation proves something
+stronger: the binary was built from this repository's source by its release workflow,
+recorded in a transparency log that a compromise of this repo could not rewrite.
+
+### 2. Build from source through the Go module proxy
+
+```sh
+go install github.com/optimuslabs-io/grokpatrol/cmd/grokpatrol@latest
+```
+
+The strongest "read the source" story — nothing pre-built is trusted at all. One
+caveat: a bare `go install` does not stamp build metadata, so `grokpatrol --version`
+reports the baked-in fallback version rather than the tag.
+
+### 3. One-liner
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
+```
+
+Detects your OS and architecture, downloads the matching release binary, **verifies it
+against SHA256SUMS before installing** (aborting on any mismatch), and installs to
+`~/.local/bin` if that is on your PATH, else `/usr/local/bin`. It never invokes sudo.
+You can — and are encouraged to — [read the script](install.sh) first.
+
+```sh
+# pin a version
+GROKPATROL_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
+
+# choose the install directory
+GROKPATROL_INSTALL_DIR=$HOME/bin curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
+```
+
+**Windows:** download the `.exe` from the releases page; the install script is
+mac/linux only.
+
+**macOS note:** binaries fetched with `curl` or built by `go install` never acquire the
+quarantine attribute, so Gatekeeper does not intervene. Only a browser download triggers
+the "unidentified developer" prompt — clear it with
+`xattr -d com.apple.quarantine <binary>` after verifying the checksum.
+
+Or build it yourself from a clone:
 
 ```sh
 make build      # ./dist/grokpatrol
 make release    # all six platforms + SHA256SUMS
-
-Window and Linux have not been tested
 ```
-
-No dependencies, no install step, nothing to configure.
 
 ## Use
 

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/buildinfo"
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/buildinfo"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 type Detector interface {

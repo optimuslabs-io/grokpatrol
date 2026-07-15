@@ -1,5 +1,5 @@
 BIN     := grokpatrol
-PKG     := github.com/optimuslabs/grokpatrol/internal/buildinfo
+PKG     := github.com/optimuslabs-io/grokpatrol/internal/buildinfo
 MAIN    := ./cmd/$(BIN)
 DIST    := dist
 
