@@ -33,6 +33,14 @@ func NewProgress(w io.Writer, s Style) *Progress {
 	return &Progress{w: w, s: s}
 }
 
+// Splash plays the animated GROKPATROL logo before the scan narration begins. It is
+// UX personality and writes ONLY to the progress stream (stderr) -- the caller gates
+// it on stderr being a TTY with colour, so a pipe, a redirect, or `--quiet` (which
+// never constructs a Progress) all skip it, and `grokpatrol --json | jq` is untouched.
+func (p *Progress) Splash() {
+	animateLogo(p.w, p.s)
+}
+
 // Header names the machine being scanned. Printed before the first check, so the
 // output says what it is looking at before it says what it is looking for.
 func (p *Progress) Header(home string) {
