@@ -590,33 +590,106 @@ func addUnique(list []string, v string) []string {
 // The affected-build WARNING is not what moves: versionBanner hoists it directly
 // under the verdict on every run. What --verbose gates here is the version INVENTORY
 // -- the paths and the un-flagged versions behind that warning -- not the warning.
+// dedupeBinaries collapses the per-marker evidence of deepscan.binary_marker to one
+// entry per binary, and orders them so the install on the user's $PATH -- the grok
+// that runs when they type `grok` -- comes first. deepscan emits one evidence row per
+// marker OFFSET, so a binary carrying the bucket name three times used to render as
+// three identical rows; this keeps the first offset as the sample.
+func dedupeBinaries(ev []model.Evidence) []model.Evidence {
+	idx := map[string]int{}
+	var out []model.Evidence
+	for _, e := range ev {
+		if i, ok := idx[e.Path]; ok {
+			// A later offset's row may be the one carrying the $PATH marker; do not lose it.
+			if out[i].PathEntry == "" && e.PathEntry != "" {
+				out[i].PathEntry = e.PathEntry
+			}
+			// Prefer the bucket marker as the sample -- it is the meaningful one -- but an
+			// install can be flagged on a DIFFERENT marker and never carry the bucket at all
+			// (deepscan builds a hit on any DefaultMarkers match). Filtering to the bucket
+			// here would drop such a binary from INSTALLATION entirely, highlight and all, so
+			// whatever marker was seen first still stands when the bucket is absent.
+			if !strings.Contains(out[i].Note, scan.MarkerBucket) && strings.Contains(e.Note, scan.MarkerBucket) {
+				pe := out[i].PathEntry
+				out[i] = e
+				out[i].PathEntry = pe
+			}
+			continue
+		}
+		idx[e.Path] = len(out)
+		out = append(out, e)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].PathEntry != "" && out[j].PathEntry == ""
+	})
+	return out
+}
+
+// binLabel is the INSTALLATION left column. The install on $PATH is called out so a
+// reader scanning a host with several copies on disk sees which one actually runs.
+func binLabel(e model.Evidence, s Style) string {
+	if e.PathEntry != "" {
+		return s.c(red+bold, "grok binary")
+	}
+	return "grok binary"
+}
+
+// binDesc is the right column: path, size, marker location and hash of one binary. For
+// the install on $PATH it also shows the $PATH entry -- the command that runs -- and,
+// when that entry is a symlink into a bundle, that it points at the resolved file above.
+// Used only under --verbose; the default report's own inline rendering in installation()
+// stays terse (path, size, and the $PATH highlight only).
+func binDesc(e model.Evidence, s Style) string {
+	desc := fmt.Sprintf("%s (%s)", e.Path, humanBytes(e.SizeBytes))
+	if e.PathEntry != "" {
+		desc += "  " + s.c(red+bold, "<- runs when you type `grok`")
+		if e.PathEntry != e.Path {
+			desc += fmt.Sprintf("\n%s on your $PATH at %s (symlink to the file above)", pad, e.PathEntry)
+		} else {
+			desc += fmt.Sprintf("\n%s on your $PATH", pad)
+		}
+	}
+	// The marker actually found, not a hardcoded bucket string: a binary flagged on a
+	// different DefaultMarkers hit must report the marker it really carries. This parses
+	// the marker back out of the Note, whose "contains marker " prefix is written by
+	// deepscan's findings(); the two must stay in sync.
+	marker := strings.TrimPrefix(e.Note, "contains marker ")
+	desc += fmt.Sprintf("\n%s contains %q at %s", pad, marker, e.Locator)
+	// Identifies the exact build sitting on this disk -- what anyone comparing notes
+	// across a fleet, or against a vendor's published hashes, actually needs.
+	if e.SHA256 != "" {
+		desc += fmt.Sprintf("\n%s sha256:%s", pad, e.SHA256)
+	}
+	return desc
+}
+
 func installation(w io.Writer, rep *model.Report, s Style) {
 	var lines [][2]string
 	withheld := false // did the default report drop receipt detail it should point at?
 
 	for _, f := range rep.Findings {
 		if f.ID == "deepscan.binary_marker" {
-			for _, e := range f.Evidence {
-				if !strings.Contains(e.Note, scan.MarkerBucket) {
-					continue
-				}
+			// One row per BINARY, not per marker hit. The evidence is emitted once per
+			// marker offset, so a binary carrying the bucket name at three offsets used to
+			// print as three identical "grok binary" rows. dedupeBinaries collapses them to
+			// one representative per path and floats the install on $PATH to the top.
+			for _, b := range dedupeBinaries(f.Evidence) {
+				label := binLabel(b, s)
 				if !s.Verbose {
-					// The path is what locates the install. The sha256 and the offset are
-					// for someone diffing this build against a vendor's published hashes,
-					// which is a receipt task -- so they wait for --verbose.
-					lines = append(lines, [2]string{"grok binary", fmt.Sprintf("%s (%s)", e.Path, humanBytes(e.SizeBytes))})
-					withheld = withheld || e.SHA256 != ""
+					// The path, size, and -- for the install that actually runs -- the $PATH
+					// highlight are what locate and identify the live install: a summary-level
+					// fact, printed in BOTH modes. The marker offset and sha256 are for someone
+					// diffing this build against a vendor's published hashes, a receipt task,
+					// so they wait for --verbose.
+					desc := fmt.Sprintf("%s (%s)", b.Path, humanBytes(b.SizeBytes))
+					if b.PathEntry != "" {
+						desc += "  " + s.c(red+bold, "<- runs when you type `grok`")
+					}
+					lines = append(lines, [2]string{label, desc})
+					withheld = withheld || b.SHA256 != ""
 					continue
 				}
-				desc := fmt.Sprintf("%s (%s)\n%s contains %q at %s",
-					e.Path, humanBytes(e.SizeBytes), pad, scan.MarkerBucket, e.Locator)
-				// Identifies the exact build sitting on this disk -- which is what anyone
-				// comparing notes across a fleet, or against a vendor's published hashes,
-				// actually needs. It was computed and then thrown away.
-				if e.SHA256 != "" {
-					desc += fmt.Sprintf("\n%s sha256:%s", pad, e.SHA256)
-				}
-				lines = append(lines, [2]string{"grok binary", desc})
+				lines = append(lines, [2]string{label, binDesc(b, s)})
 			}
 		}
 	}
@@ -671,19 +744,6 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 
 	for _, f := range rep.Findings {
 		switch f.ID {
-		case "config.mitigated":
-			lines = append(lines, [2]string{"config.toml", s.c(green, "MITIGATED") + " -- both upload mitigations set"})
-		case "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable":
-			// A short, plain phrase per case rather than the finding's Title. The titles are
-			// written to stand alone in --json and one of them ("config.toml uses constructs
-			// this scanner does not model") is parser jargon that tells a reader nothing they
-			// can act on. What this row owes them is the state and the consequence.
-			//
-			// The unparseable case is NOT dropped, only reworded: a config we could not read
-			// is a config whose mitigations are UNCONFIRMED, which is why the tool fails closed
-			// to EXPOSED. Deleting the row would delete the reason for the verdict. This row
-			// prints in BOTH modes for the same reason -- on an EXPOSED host it is the verdict.
-			lines = append(lines, [2]string{"config.toml", s.c(yellow, "EXPOSED") + " -- " + configState(f.ID)})
 		case "config.auth_present":
 			// Verbose-only. auth.json's presence is inventory, not a lever the reader pulls,
 			// and it is a detail beside the config state that actually drives the verdict.

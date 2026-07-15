@@ -70,3 +70,115 @@ func TestInstallationSummarizesByDefault(t *testing.T) {
 		}
 	}
 }
+
+// markerEv builds one deepscan.binary_marker evidence row: a binary at path, optionally
+// the $PATH entry that resolves to it (empty when this binary is not the one on $PATH).
+func markerEv(path, entry string) model.Evidence {
+	return model.Evidence{
+		Path:      path,
+		PathEntry: entry,
+		SizeBytes: 40 << 20,
+		Locator:   "offset:0x1a4f",
+		Note:      "contains marker " + scan.MarkerBucket,
+	}
+}
+
+func binReport(ev ...model.Evidence) *model.Report {
+	return &model.Report{
+		Verdict: model.VerdictExposed,
+		Findings: []model.Finding{{
+			ID:       "deepscan.binary_marker",
+			Detector: "deepscan",
+			Severity: model.SevHigh,
+			Title:    "executables contain the bucket name",
+			Evidence: ev,
+		}},
+	}
+}
+
+// When several grok binaries are on disk, the one that actually runs -- the install on
+// $PATH -- must be surfaced first and clearly marked, in BOTH the default and --verbose
+// reports: which copy is live is a summary-level fact, not receipt detail.
+func TestInstallationHighlightsPathBinaryFirst(t *testing.T) {
+	rep := binReport(
+		markerEv("/home/u/copies/grok-old", ""),
+		markerEv("/home/u/.grok/dist/cli.js", "/usr/local/bin/grok"), // the active one
+		markerEv("/home/u/backup/grok", ""),
+	)
+	for _, s := range []Style{{}, {Verbose: true}} {
+		out := renderStyle(rep, s)
+
+		active := strings.Index(out, "/home/u/.grok/dist/cli.js")
+		other := strings.Index(out, "/home/u/copies/grok-old")
+		if active < 0 || other < 0 {
+			t.Fatalf("verbose=%v: both binaries should render; got:\n%s", s.Verbose, out)
+		}
+		if active > other {
+			t.Errorf("verbose=%v: the $PATH binary must render before the others; got:\n%s", s.Verbose, out)
+		}
+		if !strings.Contains(out, "runs when you type") {
+			t.Errorf("verbose=%v: the active binary must be labelled as the one that runs; got:\n%s", s.Verbose, out)
+		}
+	}
+
+	// The $PATH entry location (distinct from the resolved file when it's a symlink into
+	// a bundle) is receipt detail -- only --verbose promises it.
+	verb := renderStyle(rep, Style{Verbose: true})
+	if !strings.Contains(verb, "/usr/local/bin/grok") {
+		t.Errorf("--verbose must show the $PATH entry location; got:\n%s", verb)
+	}
+}
+
+// The evidence is emitted once per marker OFFSET; a single binary carrying the bucket
+// name at several offsets must still render as ONE row, or the count of installs reads
+// as inflated.
+func TestInstallationDedupesPerBinary(t *testing.T) {
+	one := markerEv("/home/u/.grok/grok", "/home/u/.grok/grok")
+	two := one
+	two.Locator = "offset:0x2b00" // same file, second marker offset
+	rep := binReport(one, two)
+
+	for _, s := range []Style{{}, {Verbose: true}} {
+		out := renderStyle(rep, s)
+		if n := strings.Count(out, "/home/u/.grok/grok ("); n != 1 {
+			t.Errorf("verbose=%v: binary should render once, rendered %d times; got:\n%s", s.Verbose, n, out)
+		}
+	}
+}
+
+// An install can be flagged on a marker OTHER than the bucket name (deepscan builds a
+// hit on any DefaultMarkers match). It must still render -- and if it is the one on
+// $PATH, the highlight must survive -- rather than being filtered out because its Note
+// does not mention the bucket.
+func TestInstallationRendersNonBucketMarkerInstall(t *testing.T) {
+	e := markerEv("/usr/local/bin/grok", "/usr/local/bin/grok")
+	e.Note = "contains marker " + scan.MarkerFlag // a real marker, but not the bucket
+	rep := binReport(e)
+
+	def := renderStyle(rep, Style{})
+	if !strings.Contains(def, "/usr/local/bin/grok") {
+		t.Errorf("a non-bucket-marker install must still render; got:\n%s", def)
+	}
+	if !strings.Contains(def, "runs when you type") {
+		t.Errorf("the $PATH highlight must survive a non-bucket marker; got:\n%s", def)
+	}
+
+	verb := renderStyle(rep, Style{Verbose: true})
+	if !strings.Contains(verb, scan.MarkerFlag) {
+		t.Errorf("--verbose must report the marker actually found, not a hardcoded bucket; got:\n%s", verb)
+	}
+}
+
+// A real binary directly on $PATH (not a symlink) is the active one, and --verbose says
+// so without inventing a phantom symlink target.
+func TestInstallationRealPathBinary(t *testing.T) {
+	rep := binReport(markerEv("/usr/local/bin/grok", "/usr/local/bin/grok"))
+	verb := renderStyle(rep, Style{Verbose: true})
+
+	if !strings.Contains(verb, "on your $PATH") {
+		t.Errorf("active binary must note it is on $PATH; got:\n%s", verb)
+	}
+	if strings.Contains(verb, "symlink to the file above") {
+		t.Errorf("a non-symlinked $PATH binary must not claim to be a symlink; got:\n%s", verb)
+	}
+}
