@@ -80,7 +80,8 @@ func animateLogo(w io.Writer, s Style) {
 		settled[i] = fmt.Sprintf("\033[38;5;%dm\033[1m", logoRamp[min(i, len(logoRamp)-1)])
 	}
 
-	glitch := func() rune { return logoGlitch[rand.Intn(len(logoGlitch))] }
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	glitch := func() rune { return logoGlitch[rng.Intn(len(logoGlitch))] }
 
 	// Frame 0: fully scrambled, dim.
 	for r := 0; r < rows; r++ {
