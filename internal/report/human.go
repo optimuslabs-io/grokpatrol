@@ -1198,6 +1198,15 @@ func secretExamples(rep *model.Report) (shown []model.SecretHit, omitted int) {
 		all = append(all, r.SecretFiles...)
 	}
 
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].DeletedFromCheckout != all[j].DeletedFromCheckout {
+			return all[i].DeletedFromCheckout
+		}
+		if all[i].Class != all[j].Class {
+			return all[i].Class < all[j].Class
+		}
+		return all[i].Path < all[j].Path
+	})
 	picked := make([]bool, len(all))
 	seenClass := map[string]bool{}
 	// First pass: one hit per unseen class, preserving the deleted-first order.
