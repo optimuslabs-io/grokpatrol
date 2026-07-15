@@ -62,8 +62,6 @@ func run() int {
 		colorMode = flag.String("color", "auto", "auto | always | never")
 		quiet     = flag.Bool("quiet", false, "print only the verdict")
 		verbose   = flag.Bool("verbose", false, "print every archive, secret and evidence row instead of a sample")
-		failOn    = flag.String("fail-on", "medium", "lowest severity that yields a non-zero exit: none|low|medium|high|critical")
-		exitZero  = flag.Bool("exit-zero", false, "always exit 0 unless the tool itself failed")
 		noAnim    = flag.Bool("no-animation", false, "skip the animated logo (progress still prints)")
 		showVer   = flag.Bool("version", false, "print version and exit")
 	)
