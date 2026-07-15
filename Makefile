@@ -22,7 +22,7 @@ LDFLAGS := -s -w \
 GOFLAGS := -trimpath -buildvcs=false -mod=readonly
 GOBUILD := CGO_ENABLED=0 go build $(GOFLAGS) -ldflags '$(LDFLAGS)'
 
-PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
+PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
 # Where `make demo` builds its synthetic compromised host.
 FAKEHOME ?= /tmp/grokpatrol-fakehome
@@ -55,7 +55,7 @@ install:
 run: build
 	@$(DIST)/$(BIN) $(ARGS)
 
-## release: cross-compile all six platforms into ./dist with SHA256SUMS
+## release: cross-compile all four platforms into ./dist with SHA256SUMS
 .PHONY: release
 release: clean-dist verify-deps
 	@mkdir -p $(DIST)

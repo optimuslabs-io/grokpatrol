@@ -10,8 +10,6 @@
 #
 # Environment overrides:
 #   GROKPATROL_VERSION      install a specific tag (e.g. v0.1.0) instead of latest
-#   GROKPATROL_INSTALL_DIR  install directory (default: ~/.local/bin if already
-#                           on PATH, otherwise /usr/local/bin)
 #
 # This script never invokes sudo. If the install directory is not writable it
 # tells you how to re-run, and exits.
@@ -37,7 +35,7 @@ main() {
     case "$(uname -s)" in
         Darwin) os=darwin ;;
         Linux)  os=linux ;;
-        *) fail "unsupported OS '$(uname -s)' -- download a binary from https://github.com/$REPO/releases (Windows binaries are published there)" ;;
+        *) fail "unsupported OS '$(uname -s)' -- grokpatrol only builds for macOS and Linux" ;;
     esac
     case "$(uname -m)" in
         x86_64|amd64)  arch=amd64 ;;
@@ -94,20 +92,16 @@ main() {
     # Pick the install directory. ~/.local/bin only qualifies if it is already
     # on PATH (stock macOS does not have it there, and installing somewhere the
     # shell will not look ends in "command not found").
-    if [ -n "${GROKPATROL_INSTALL_DIR:-}" ]; then
-        dir="$GROKPATROL_INSTALL_DIR"
-    else
-        case ":$PATH:" in
-            *":$HOME/.local/bin:"*) dir="$HOME/.local/bin" ;;
-            *) dir="/usr/local/bin" ;;
-        esac
-    fi
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) dir="$HOME/.local/bin" ;;
+        *) dir="/usr/local/bin" ;;
+    esac
 
     if [ ! -d "$dir" ] || [ ! -w "$dir" ]; then
         note "install.sh: $dir is not a writable directory."
-        note "re-run with a directory you can write to:"
-        note "  GROKPATROL_INSTALL_DIR=\$HOME/bin sh install.sh"
-        note "or, if $dir is where you want it, re-run the installer with sudo."
+        note "re-run the installer with sudo, or move grokpatrol into a directory"
+        note "on your PATH by hand after downloading it from the releases page:"
+        note "  https://github.com/$REPO/releases"
         exit 1
     fi
 

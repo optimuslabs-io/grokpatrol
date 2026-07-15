@@ -29,13 +29,7 @@ Detects your OS and architecture, downloads the matching release binary, **verif
 against SHA256SUMS before installing** (aborting on any mismatch), and installs to
 `~/.local/bin` if that is on your PATH, else `/usr/local/bin`.
 
-```sh
-# choose the install directory
-GROKPATROL_INSTALL_DIR=$HOME/bin curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
-```
-
-**Windows:** download the `.exe` from the releases page; the install script is
-mac/linux only.
+macOS and Linux only; Windows is not currently built or supported.
 
 ### 2. Build from source through the Go module proxy
 
@@ -214,7 +208,7 @@ for completeness and do not affect the verdict.
 | `make verify-deps` | prove the binary is stdlib-only, with no network and no cgo |
 | `make test` / `fuzz` / `bench` | race tests, fuzz the log parser, benchmark the scanner |
 | `make fmt` / `vet` | gofmt in place, go vet |
-| `make release` | all six platforms, trimmed, CGO-free, with `SHA256SUMS` |
+| `make release` | all four platforms, trimmed, CGO-free, with `SHA256SUMS` |
 | `make clean` / `distclean` | remove build output; also caches and the demo fixture |
 
 `make demo` is the one worth running. There is no real Grok install to test against, so
