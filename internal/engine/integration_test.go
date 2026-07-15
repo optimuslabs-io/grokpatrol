@@ -153,6 +153,7 @@ func scanHome(t *testing.T, home string) *model.Report {
 		Home:          home,
 		GrokHome:      filepath.Join(home, ".grok"),
 		ScanRoots:     []string{home}, // do not wander outside the fixture
+		ConfineWalk:   true,           // ...and honor that: skip the host's system-bin dirs
 		Concurrency:   4,
 		MaxFileSize:   512 << 20,
 		UseGit:        true,
