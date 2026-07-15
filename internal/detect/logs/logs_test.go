@@ -109,7 +109,7 @@ func TestCorrelationAcrossRotatedFiles(t *testing.T) {
 		t.Errorf("phases = %v, want both before and after", phases)
 	}
 	if !hasFinding(res, "logs.archive_enqueued") {
-		t.Error("no critical archive_enqueued finding was raised")
+		t.Error("no archive_enqueued finding was raised")
 	}
 }
 
@@ -160,7 +160,7 @@ func TestOrphanEnqueueIsNeverDropped(t *testing.T) {
 		t.Errorf("status = %q, want queued", r.Status)
 	}
 	if !hasFinding(res, "logs.archive_enqueued") {
-		t.Error("orphan enqueue did not raise a critical finding")
+		t.Error("orphan enqueue did not raise an archive_enqueued finding")
 	}
 }
 

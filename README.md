@@ -19,11 +19,31 @@ is left on this disk, which repos were taken, and what do I have to rotate?**
 
 ## Install
 
-No dependencies, no install step, nothing to configure — the binary is the whole tool.
-Three ways to get it, most verifiable first. This is a forensic tool; pick your level
-of paranoia deliberately.
+### 1. One-liner
 
-### 1. Download and verify (recommended)
+```sh
+curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
+```
+
+Detects your OS and architecture, downloads the matching release binary, **verifies it
+against SHA256SUMS before installing** (aborting on any mismatch), and installs to
+`~/.local/bin` if that is on your PATH, else `/usr/local/bin`.
+
+```sh
+# choose the install directory
+GROKPATROL_INSTALL_DIR=$HOME/bin curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
+```
+
+**Windows:** download the `.exe` from the releases page; the install script is
+mac/linux only.
+
+### 2. Build from source through the Go module proxy
+
+```sh
+go install github.com/optimuslabs-io/grokpatrol/cmd/grokpatrol@latest
+```
+
+### 3. Download and verify
 
 Grab the binary for your platform plus `SHA256SUMS` from the
 [releases page](https://github.com/optimuslabs-io/grokpatrol/releases), then:
@@ -41,50 +61,6 @@ The checksum proves the download arrived intact. The attestation proves somethin
 stronger: the binary was built from this repository's source by its release workflow,
 recorded in a transparency log that a compromise of this repo could not rewrite.
 
-### 2. Build from source through the Go module proxy
-
-```sh
-go install github.com/optimuslabs-io/grokpatrol/cmd/grokpatrol@latest
-```
-
-The strongest "read the source" story — nothing pre-built is trusted at all. One
-caveat: a bare `go install` does not stamp build metadata, so `grokpatrol --version`
-reports the baked-in fallback version rather than the tag.
-
-### 3. One-liner
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
-```
-
-Detects your OS and architecture, downloads the matching release binary, **verifies it
-against SHA256SUMS before installing** (aborting on any mismatch), and installs to
-`~/.local/bin` if that is on your PATH, else `/usr/local/bin`. It never invokes sudo.
-You can — and are encouraged to — [read the script](install.sh) first.
-
-```sh
-# pin a version
-GROKPATROL_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
-
-# choose the install directory
-GROKPATROL_INSTALL_DIR=$HOME/bin curl -fsSL https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh | sh
-```
-
-**Windows:** download the `.exe` from the releases page; the install script is
-mac/linux only.
-
-**macOS note:** binaries fetched with `curl` or built by `go install` never acquire the
-quarantine attribute, so Gatekeeper does not intervene. Only a browser download triggers
-the "unidentified developer" prompt — clear it with
-`xattr -d com.apple.quarantine <binary>` after verifying the checksum.
-
-Or build it yourself from a clone:
-
-```sh
-make build      # ./dist/grokpatrol
-make release    # all six platforms + SHA256SUMS
-```
-
 ## Use
 
 ```sh
@@ -101,16 +77,9 @@ what it is, with pointers to everything it withholds.
 `--verbose` lists every `gs://` destination, every secret file by name and blob id, and all evidence rows.
 `--json` is the complete forensic record for fleet collection or automated tools.
 
-There is no `--quick`. The filesystem walk used to be optional, and a scan that skipped it
-could not see a grok binary, a staged archive, or a second `.grok` home — yet it reported
-CLEAN with exactly the same confidence as a scan that had looked. A fast answer that is
-allowed to miss the evidence is not a cheaper version of this tool.
-
 ### Watch it work
 
-The scan says what it is checking for, as it checks, on **stderr** — so the coverage behind a
-verdict is visible without reading the source, and a two-minute disk walk is not a blank
-screen. The report itself goes to stdout, so `grokpatrol --json | jq` still works while you
+The report itself goes to stdout, so `grokpatrol --json | jq` still works while you
 watch. `--quiet` silences it.
 
 ```
@@ -129,7 +98,7 @@ grokpatrol 0.1.0 scanning /Users/you
   → secrets   git rev-list --objects HEAD minus the working tree, per implicated repository
     ✓ secrets   3 secret files, 2 DELETED FROM THE CHECKOUT but still in history
 
-VERDICT: COMPROMISED
+VERDICT: EXPOSED
   2 repositories collected and 3 archives built and queued for upload to gs://grok-code-session-traces/.
 
 LIKELY EXPOSED SECRETS
@@ -148,8 +117,8 @@ Exit codes, for scripting:
 | `0` | CLEAN | No Grok artifacts, and the scan was not degraded |
 | `1` | — | The tool itself failed (bad flags, internal error). **Never used for findings.** |
 | `2` | INDETERMINATE | Nothing found, but parts of the host could not be read |
-| `3` | EXPOSED | Grok is present and unmitigated, but no evidence it uploaded anything |
-| `4` | COMPROMISED | Evidence of collection or upload |
+| `3` | EXPOSED | Grok is present and unmitigated, and/or repositories were collected, queued or staged on your system — but no evidence the bytes were uploaded |
+| `4` | COMPROMISED | Evidence of upload — a delivery to xAI was confirmed (or an upload event the tool cannot classify, read as one) |
 
 ## What it looks at
 
@@ -163,33 +132,12 @@ Exit codes, for scripting:
 | Affected version | install manifests, package metadata, binary strings |
 | **Secrets in the uploaded object set** | `git rev-list --objects HEAD` minus the working tree |
 
-### The mitigation is two settings, not one
-
-Public reporting fixated on one flag. The config actually needs **both**:
-
-```toml
-[telemetry]
-trace_upload = false
-
-[harness]
-disable_codebase_upload = true
-```
-
-A host with only `disable_codebase_upload` set has stopped the whole-repository
-archives but is **still uploading session traces**. grokpatrol evaluates each
-independently and treats "partially mitigated" as EXPOSED — reporting a
-half-configured host as safe is the single worst thing this tool could do. Every
-other key it finds under `[harness]` and `[telemetry]` is listed too, because the
-key list came from a screenshot rather than vendor documentation, and there may be
-options nobody has enumerated.
-
 ### Secrets
 
 The secrets section is the one that matters most. The exfiltrated set was *"every git object
 reachable from HEAD"*, which is precisely what `git rev-list --objects HEAD` enumerates.
 Subtracting the current checkout from it yields the files that are **gone from your working
-tree but still alive in history** — the deleted `.env`, the rotated-out `.pem`. You cannot
-find those by looking at your own repository, and they went out with the archive.
+tree but still alive in history** — the deleted `.env`, the rotated-out `.pem`. 
 
 **In default mode**, the report shows you the count of secrets and specifically flags how many are
 deleted from your checkout (the ones you cannot find by looking) — because those are the priority:
@@ -208,7 +156,7 @@ afford to hand it to you at all.
 
 ## Guarantees
 
-These are enforced mechanically, not promised in prose:
+These are enforced mechanically:
 
 - **No network. Ever.** Proven by the linker: `make verify-deps` asserts that `net`,
   `net/http` and `crypto/tls` do not appear in `go list -deps`, and that `go.sum` is empty.

@@ -38,9 +38,10 @@ func findings(repos []model.RepoStatus, rawHits []model.Evidence, events []event
 
 	// Top of the report, because nothing else in it can say this. Every other exfil
 	// finding proves COLLECTION and leaves delivery unconfirmable; this one proves the
-	// bytes LANDED. It is unreachable against Grok as it ships today -- see
-	// kindUploadSuccess -- and exists so that the day a completion event appears, the
-	// tool reports it as the proof it is rather than as an unrecognized event.
+	// bytes LANDED, and it is the ONLY log finding that drives COMPROMISED (TagUpload).
+	// It is unreachable against Grok as it ships today -- see kindUploadSuccess -- and
+	// exists so that the day a completion event appears, the tool reports it as the
+	// proof it is rather than as an unrecognized event.
 	if len(delivered) > 0 {
 		ev := make([]model.Evidence, 0, len(delivered))
 		confirmed := 0
@@ -63,7 +64,7 @@ func findings(repos []model.RepoStatus, rawHits []model.Evidence, events []event
 			ID:       "logs.upload_confirmed",
 			Detector: "logs",
 			Severity: model.SevCritical,
-			Tags:     []string{model.TagExfil},
+			Tags:     []string{model.TagExfil, model.TagUpload},
 			Title: fmt.Sprintf("%s CONFIRMED DELIVERED to xAI (%s)",
 				engine.Plural(confirmed, "archive"), engine.Plural(len(delivered), "repository")),
 			Detail: "Grok's logs record an upload-completion event for these archives. This is not an inference from " +
@@ -94,12 +95,18 @@ func findings(repos []model.RepoStatus, rawHits []model.Evidence, events []event
 		out = append(out, model.Finding{
 			ID:       "logs.archive_enqueued",
 			Detector: "logs",
-			Severity: model.SevCritical,
+			// SevHigh, not Critical, and TagExfil without TagUpload: an enqueue proves
+			// the archive was BUILT and QUEUED, not that it was delivered. That is
+			// collection -> EXPOSED, not COMPROMISED. Only a confirmed delivery
+			// (logs.upload_confirmed) or an unclassifiable upload event crosses that line.
+			Severity: model.SevHigh,
 			Tags:     []string{model.TagExfil},
 			Title:    fmt.Sprintf("%d repositories had %d archives queued for upload to xAI", len(queued), archives),
 			Detail: "Grok's own logs record " + eventEnqueued + " events for these repositories. " +
 				"Each archive contains every tracked file at HEAD and every git object reachable from HEAD -- " +
-				"including files deleted from the checkout but preserved in history.",
+				"including files deleted from the checkout but preserved in history. The logs record the archive " +
+				"being QUEUED; Grok logs no completion event, so delivery is unconfirmed -- treat these repositories " +
+				"as exposed and rotate regardless.",
 			Remediation: rotateAdvice,
 			Evidence:    ev,
 		})
@@ -135,8 +142,12 @@ func findings(repos []model.RepoStatus, rawHits []model.Evidence, events []event
 		out = append(out, model.Finding{
 			ID:       "logs.raw_bucket_reference",
 			Detector: "logs",
+			// TagUpload: the structured events this tool knows about were not found, so
+			// the schema has moved. The safe reading of a bucket reference we cannot
+			// otherwise classify is that an upload happened -- so this crosses to
+			// COMPROMISED rather than hiding behind a schema change.
 			Severity: model.SevCritical,
-			Tags:     []string{model.TagExfil, model.TagSchema},
+			Tags:     []string{model.TagExfil, model.TagSchema, model.TagUpload},
 			Title:    fmt.Sprintf("%d log lines reference the exfiltration bucket, but no upload event could be parsed", len(rawHits)),
 			Detail: "Log lines mention " + scan.MarkerBucket + " or a codebase archive, yet the structured upload events " +
 				"this tool knows about were not found. The log schema has probably changed. Treat these lines as evidence of upload.",
@@ -147,11 +158,12 @@ func findings(repos []model.RepoStatus, rawHits []model.Evidence, events []event
 
 	// Delivery context. SevInfo and untagged, both on purpose.
 	//
-	// It is NOT tagged exfil, even though it is about exfiltration, and that is a
-	// deliberate belt-and-braces: engine.verdict promotes on (SevHigh AND exfil), so
-	// SevInfo already cannot promote -- but leaving the tag off means this finding
-	// cannot promote even if someone later lowers that threshold. The finding is a
-	// reader aid; it is not allowed to be load-bearing in either direction.
+	// It is NOT tagged exfil or upload, even though it is about exfiltration, and that
+	// is a deliberate belt-and-braces: engine.verdict promotes COMPROMISED on (SevHigh
+	// AND upload) and EXPOSED on SevMedium+, so SevInfo already cannot promote -- but
+	// leaving the tags off means this finding cannot promote even if someone later
+	// lowers those thresholds. The finding is a reader aid; it is not allowed to be
+	// load-bearing in either direction.
 	if auth.any() {
 		var title, detail string
 		switch {
@@ -203,8 +215,11 @@ func findings(repos []model.RepoStatus, rawHits []model.Evidence, events []event
 		out = append(out, model.Finding{
 			ID:       "logs.unknown_upload_event",
 			Detector: "logs",
+			// TagUpload: an unrecognized repo_state.upload.* event is read as a delivery
+			// (fail-safe), so it drives COMPROMISED. The day the schema gains a real
+			// completion event, this is the net that still catches it.
 			Severity: model.SevHigh,
-			Tags:     []string{model.TagExfil, model.TagSchema},
+			Tags:     []string{model.TagExfil, model.TagSchema, model.TagUpload},
 			Title:    "Unrecognized " + eventPrefix + " events found in the logs",
 			Detail: "These event names were not in the set this tool was built against, so Grok's logging has changed. " +
 				"They were counted as uploads, because the safe reading of an upload event we cannot classify is that an upload happened.",

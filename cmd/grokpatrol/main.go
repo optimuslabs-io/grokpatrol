@@ -230,8 +230,8 @@ EXIT CODES
   0  CLEAN          no Grok artifacts, and the scan was not degraded
   1  tool error     bad flags or an internal failure (never used for findings)
   2  INDETERMINATE  nothing found, but parts of the host could not be read
-  3  EXPOSED        Grok present and unmitigated, no evidence of upload
-  4  COMPROMISED    evidence of collection or upload
+  3  EXPOSED        Grok present/unmitigated or repos collected or queued, no evidence of upload
+  4  COMPROMISED    evidence of upload -- a delivery confirmed, or an unclassifiable upload event
 
 FLAGS
 `)

@@ -17,7 +17,9 @@ mkdir -p "$GROK/logs" "$GROK/upload_queue/sess-a1/turn-3" "$HOME_DIR/.local/bin"
 
 # --- 1. Logs, with the start/enqueue pair SPLIT ACROSS A ROTATION BOUNDARY ------
 # This is the case a per-file correlator gets wrong: it would report payments-api
-# as COLLECTED-ONLY when an archive was in fact queued.
+# as COLLECTED-ONLY when an archive was in fact queued. A repo_state.upload.completed
+# event then confirms the after-archive was DELIVERED -- collection alone is only
+# EXPOSED, so this completion event is what makes the host COMPROMISED (exit 4).
 cat > "$GROK/logs/unified.jsonl.1" <<EOF
 {"event":"repo_state.upload.start","sid":"sess-a1","ctx":{"turn_number":3,"repo_path":"$HOME_DIR/work/payments-api"},"ts":"2026-06-30T10:00:00Z","version":"0.2.93"}
 {"event":"repo_state.upload.start","sid":"sess-a1","ctx":{"turn_number":3,"repo_path":"$HOME_DIR/work/payments-api"},"ts":"2026-06-30T10:00:01Z"}
@@ -26,6 +28,7 @@ EOF
 cat > "$GROK/logs/unified.jsonl" <<EOF
 {"event":"repo_state.upload.enqueued","sid":"sess-a1","ctx":{"turn_number":3},"gcs_path":"gs://$BUCKET/sess-a1/3/before_codebase.tar.gz","ts":"2026-06-30T10:00:05Z"}
 {"event":"repo_state.upload.enqueued","sid":"sess-a1","ctx":{"turn_number":3},"gcs_path":"gs://$BUCKET/sess-a1/3/after_codebase.tar.gz","ts":"2026-06-30T10:02:00Z"}
+{"event":"repo_state.upload.completed","sid":"sess-a1","ctx":{"turn_number":3},"gcs_path":"gs://$BUCKET/sess-a1/3/after_codebase.tar.gz","ts":"2026-06-30T10:03:00Z"}
 {"event":"repo_state.upload.start","sid":"sess-b2","ctx":{"turn_number":1,"repo_path":"$HOME_DIR/work/scratch"},"ts":"2026-06-12T09:00:00Z"}
 {"event":"agent.turn.complete","sid":"sess-b2","ctx":{"turn_number":1}}
 EOF

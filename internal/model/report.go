@@ -8,8 +8,8 @@ type Verdict string
 const (
 	VerdictClean         Verdict = "CLEAN"         // no grok artifacts, and the scan was not degraded
 	VerdictIndeterminate Verdict = "INDETERMINATE" // no findings, but we could not see everything
-	VerdictExposed       Verdict = "EXPOSED"       // grok present and unmitigated, no evidence of upload
-	VerdictCompromised   Verdict = "COMPROMISED"   // evidence of collection or upload
+	VerdictExposed       Verdict = "EXPOSED"       // grok present/unmitigated and/or repos collected or queued, no evidence of upload
+	VerdictCompromised   Verdict = "COMPROMISED"   // evidence of upload: a delivery confirmed, or an unclassifiable upload event
 )
 
 // ExitCode is the scripting contract. Note that findings never produce exit 1;

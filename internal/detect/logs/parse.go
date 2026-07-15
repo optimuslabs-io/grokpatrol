@@ -195,17 +195,19 @@ const (
 	//	a success event proves a delivery LANDED.
 	//	no success event proves NOTHING about whether one did.
 	//
-	// So this is an UPGRADE PATH, never a GATE. Finding one promotes the report from
-	// "delivery unconfirmed" to "delivery CONFIRMED". NOT finding one changes nothing:
-	// the verdict still rests on collection, which is proven by the start and enqueue
-	// events on their own. Requiring a success before reporting exfiltration would gate
-	// COMPROMISED on a line Grok has no code path to write, and the verdict would be
-	// unreachable on every host forever -- a false negative on every genuinely
-	// compromised machine, which is the one failure this tool exists to never have.
+	// COMPROMISED is defined as proof the code LEFT the machine, so this IS the gate:
+	// a confirmed delivery (logs.upload_confirmed, TagUpload) is what promotes the
+	// verdict to COMPROMISED. Collection and queueing prove exposure, not upload, and
+	// stop at EXPOSED. Because Grok emits no completion event today, COMPROMISED is
+	// currently reachable only through this signal or the schema-drift fallbacks
+	// (logs.unknown_upload_event / logs.raw_bucket_reference, also TagUpload): the tool
+	// reports EXPOSED on a queued-but-undelivered host and reserves the red banner for
+	// bytes it can show landed. That is the deliberate, conservative bar; a collected
+	// host is not let off -- it is EXPOSED, and its credentials must still be rotated.
 	//
 	// It is here so that the day xAI adds repo_state.upload.completed, or the storage
-	// client starts logging its 2xx, grokpatrol RECOGNIZES it instead of filing it under
-	// "unrecognized event". Do not wire it into engine.verdict as a precondition.
+	// client starts logging its 2xx, grokpatrol RECOGNIZES it as the delivery proof it
+	// is instead of filing it under "unrecognized event".
 	kindUploadSuccess
 )
 

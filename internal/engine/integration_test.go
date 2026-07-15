@@ -55,7 +55,8 @@ func TestCompromisedHostEndToEnd(t *testing.T) {
 		// Every detector must have fired. If one silently stops contributing, the verdict
 		// can still come out right for the wrong reason -- so each is asserted by name.
 		for _, want := range []string{
-			"logs.archive_enqueued",         // proof of upload, from the log ledger
+			"logs.upload_confirmed",         // THE COMPROMISED driver: a delivery landed
+			"logs.archive_enqueued",         // archives queued (collection, EXPOSED-level)
 			"logs.collected_only",           // a repo collected but never enqueued
 			"queue.present",                 // a populated upload_queue
 			"queue.metadata_bucket",         // a manifest naming the bucket
@@ -74,13 +75,15 @@ func TestCompromisedHostEndToEnd(t *testing.T) {
 
 		// The rotation-boundary case: the start event is in unified.jsonl.1 and its
 		// enqueues are in unified.jsonl. A per-file correlator reports this repo as
-		// COLLECTED-ONLY and understates the worst finding the tool can make.
+		// COLLECTED-ONLY and understates the worst finding the tool can make. Global
+		// correlation across the rotated files instead confirms the enqueues, and the
+		// completion event then promotes it to DELIVERED.
 		pay := repoBySuffix(rep, "payments-api")
 		if pay == nil {
 			t.Fatal("payments-api is missing from the ledger")
 		}
-		if pay.Status != model.StatusQueued {
-			t.Errorf("payments-api status = %q, want queued -- the enqueue in the rotated sibling file was not correlated",
+		if pay.Status != model.StatusDelivered {
+			t.Errorf("payments-api status = %q, want delivered -- the enqueues in the rotated sibling file were not correlated and confirmed",
 				pay.Status)
 		}
 		if len(pay.Archives) != 2 {
@@ -189,6 +192,10 @@ func buildFakeHome(t *testing.T) string {
 	write(t, filepath.Join(grok, "logs", "unified.jsonl"), lines(
 		ev(`{"event":"%s.enqueued","sid":"sess-a1","ctx":{"turn_number":3},"gcs_path":"gs://%s/sess-a1/3/before_codebase.tar.gz","ts":"2026-06-30T10:00:05Z"}`, scan.MarkerEvent, bucket),
 		ev(`{"event":"%s.enqueued","sid":"sess-a1","ctx":{"turn_number":3},"gcs_path":"gs://%s/sess-a1/3/after_codebase.tar.gz","ts":"2026-06-30T10:02:00Z"}`, scan.MarkerEvent, bucket),
+		// A completion event for the after-archive: this is what proves DELIVERY and
+		// takes the host to COMPROMISED. Without it the collected+queued host is only
+		// EXPOSED -- collection is not proof the bytes left the machine.
+		ev(`{"event":"%s.completed","sid":"sess-a1","ctx":{"turn_number":3},"gcs_path":"gs://%s/sess-a1/3/after_codebase.tar.gz","ts":"2026-06-30T10:03:00Z"}`, scan.MarkerEvent, bucket),
 		ev(`{"event":"%s.start","sid":"sess-b2","ctx":{"turn_number":1,"repo_path":%q},"ts":"2026-06-12T09:00:00Z"}`, scan.MarkerEvent, filepath.Join(home, "work", "scratch")),
 	))
 	writeGz(t, filepath.Join(grok, "logs", "unified.jsonl.2.gz"), lines(

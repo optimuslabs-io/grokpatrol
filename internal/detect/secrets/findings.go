@@ -40,11 +40,13 @@ func findings(repos []model.RepoStatus) []model.Finding {
 
 	var out []model.Finding
 
-	// NOT tagged exfil, and that is load-bearing. See engine.verdict: COMPROMISED is
-	// (SevHigh AND exfil), so an exfil tag here would let a secret PROMOTE THE VERDICT
-	// BY ITSELF -- and this detector never establishes that an upload happened. It is
-	// downstream triage: it inherits its repositories from the log ledger, from staged
-	// manifests, or from an operator's --repo, and then says what was in them.
+	// NEITHER tagged exfil NOR upload, and that is load-bearing. See engine.verdict:
+	// COMPROMISED is (SevHigh AND upload) and EXPOSED is (SevMedium+), so an upload tag
+	// here would let a secret PROMOTE THE VERDICT TO COMPROMISED BY ITSELF, and an exfil
+	// tag would assert collection this detector never observed -- and it never
+	// establishes that an upload, or even a collection, happened. It is downstream
+	// triage: it inherits its repositories from the log ledger, from staged manifests,
+	// or from an operator's --repo, and then says what was in them.
 	//
 	// The bug that motivated this: `grokpatrol --repo ~/myproject` on a machine with no
 	// Grok at all -- no ~/.grok, no logs, no upload queue, no binary -- found a .env
@@ -52,14 +54,14 @@ func findings(repos []model.RepoStatus) []model.Finding {
 	// a host the collector had never touched, which is the false positive that teaches
 	// people to stop believing the red banner.
 	//
-	// Removing the tag cannot hide a real one. Every repository the ledger or the queue
-	// implicates already carries its own exfil finding -- logs.archive_enqueued,
+	// Removing the tags cannot hide a real one. Every repository the ledger or the queue
+	// implicates already carries its own finding -- logs.archive_enqueued,
 	// logs.collected_only, or queue.metadata_bucket (RepoHints come only from staged
-	// manifests, which raise that one) -- so a genuinely collected repo is COMPROMISED
-	// on that evidence, and these findings stay Critical/High and still force EXPOSED.
-	// This is the same doctrine CLAUDE.md already states for config: a High config
-	// finding is exposure, not exfiltration. A secret is what WOULD leak if the repo
-	// went out; it is not proof that it did.
+	// manifests, which raise that one) -- so a collected repo is at least EXPOSED on
+	// that evidence, and a repo whose delivery was confirmed is COMPROMISED via
+	// logs.upload_confirmed. This is the same doctrine CLAUDE.md states for config: a
+	// High config finding is exposure, not exfiltration. A secret is what WOULD leak if
+	// the repo went out; it is not proof that it did.
 
 	// Top billing: the user cannot find these by looking at their own working tree.
 	if len(deleted) > 0 {

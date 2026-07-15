@@ -54,11 +54,14 @@ type agg struct {
 //	no 401 on the upload leg proves NOTHING about whether one SUCCEEDED.
 //
 // So this can lower a reader's confidence that the bytes landed; it can never
-// raise it, and it must never downgrade COMPROMISED. A host whose uploads all
-// 401'd still had its repositories collected and queued, and the queue may well
-// have drained on a later run whose logs have since rotated away. Wiring this
-// into engine.verdict as a downgrade path would convert a true positive into a
-// false negative, which is the one failure this tool exists to never have.
+// raise it, and it must never downgrade the verdict. A host whose uploads all
+// 401'd still had its repositories collected and queued -- that is EXPOSED on the
+// collection evidence alone -- and the queue may well have drained on a later run
+// whose logs have since rotated away. Wiring these 401s into engine.verdict as a
+// downgrade path would let a refused-delivery signal argue a collected host down
+// toward CLEAN, converting a true positive into a false negative. (A 401 is also
+// not the inverse signal: it never promotes to COMPROMISED either, which requires
+// a confirmed delivery -- TagUpload -- not merely the absence of a refusal.)
 //
 // Correlation is by TIME, not by session, and that is forced by the data: on the
 // only host we have logs from, every upload-leg 401 carries no sid at all (the
