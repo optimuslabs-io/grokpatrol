@@ -29,18 +29,6 @@ func (s Severity) String() string {
 
 func (s Severity) MarshalJSON() ([]byte, error) { return json.Marshal(s.String()) }
 
-// ParseSeverity maps a name to a Severity. Reports ok=false on an unknown name
-// so --fail-on can reject a typo rather than silently defaulting to a threshold
-// the user did not intend.
-func ParseSeverity(name string) (Severity, bool) {
-	for s, n := range sevNames {
-		if n == name {
-			return s, true
-		}
-	}
-	return SevInfo, false
-}
-
 // Evidence points at what was found. It has no field capable of carrying file
 // contents, and that is the point: this type is the structural guarantee that
 // grokpatrol cannot print a secret. Adding an Excerpt/Content/Match field would
@@ -64,6 +52,13 @@ type Evidence struct {
 	// here -- that is exactly the excerpt field this type refuses to have.
 	Source     string `json:"source,omitempty"` // display-processed, like Path
 	SourceLine int    `json:"source_line,omitempty"`
+
+	// PathEntry is set only on the ONE discovered install the grok command resolves to
+	// on this host's $PATH -- the file that runs when the user types `grok`. It holds
+	// that $PATH location (e.g. /usr/local/bin/grok), which differs from Path when the
+	// entry is a symlink into a bundle. Empty on every other binary. Like Path it is a
+	// LOCATION, display-processed home-relative, and carries no file contents.
+	PathEntry string `json:"path_entry,omitempty"`
 }
 
 type Finding struct {

@@ -48,9 +48,6 @@ func TestCompromisedHostEndToEnd(t *testing.T) {
 		if rep.Verdict != model.VerdictCompromised {
 			t.Fatalf("verdict = %s, want COMPROMISED\nfindings: %s", rep.Verdict, ids(rep))
 		}
-		if got := rep.Verdict.ExitCode(); got != 4 {
-			t.Errorf("exit code = %d, want 4", got)
-		}
 
 		// Every detector must have fired. If one silently stops contributing, the verdict
 		// can still come out right for the wrong reason -- so each is asserted by name.

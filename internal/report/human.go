@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/config"
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/model"
 	"github.com/optimuslabs-io/grokpatrol/internal/scan"
@@ -71,6 +72,7 @@ func Human(w io.Writer, rep *model.Report, s Style) {
 
 	versionBanner(w, rep, s)
 	installation(w, rep, s)
+	mitigations(w, rep, s)
 	ledger(w, rep, s)
 	staging(w, rep, s)
 	secrets(w, rep, s)
@@ -320,8 +322,21 @@ func verdictBanner(w io.Writer, rep *model.Report, s Style) {
 		}
 	case model.VerdictIndeterminate:
 		color = yellow
-		headline = "No indicators were found, but parts of this machine could not be read.\n" +
-			"This is not a clean bill of health -- see WHAT THIS SCAN COULD NOT SEE below."
+		// When nothing grok-related was found at all, say so plainly -- the scan just
+		// walked the disk and reported "no install, no logs, no queue, no version" step
+		// by step, and a verdict headline that then retreats to "no indicators were
+		// found" reads as evasive next to it. But INDETERMINATE is ALSO reachable with
+		// grok PRESENT-but-mitigated plus a material read error, and there the absence
+		// wording would be a false negative -- the one failure this tool is built to
+		// avoid. So the plain "no grok" line is gated on grok actually being absent.
+		if rep.GrokPresent {
+			headline = "No evidence of collection or upload was found, but parts of this machine could\n" +
+				"not be read. This is not a clean bill of health -- see WHAT THIS SCAN COULD NOT\n" +
+				"SEE below."
+		} else {
+			headline = "No Grok Build artifacts were found on this machine, but parts of it could not be\n" +
+				"read -- so this is not a clean bill of health. See WHAT THIS SCAN COULD NOT SEE below."
+		}
 	default:
 		color = green
 		headline = "No Grok Build artifacts were found on this machine."
@@ -649,6 +664,11 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 		}
 	}
 
+	// The config.toml state, as ONE row per file. The detector emits a finding PER
+	// mitigation (there are two), so a config with neither set produced two identical
+	// "not both set" rows; configRows collapses them and names the specific mitigations.
+	lines = append(lines, configRows(rep, s)...)
+
 	for _, f := range rep.Findings {
 		switch f.ID {
 		case "config.mitigated":
@@ -699,18 +719,136 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 	fmt.Fprintln(w)
 }
 
-// configState is the INSTALLATION row's plain-language reading of a config finding.
-// The detector's own Title still carries the full technical statement into --json.
-func configState(id string) string {
-	switch id {
-	case "config.absent":
-		return "no config.toml, so neither upload mitigation is set"
-	case "config.explicitly_disabled":
-		return "the upload mitigations are explicitly turned off"
-	case "config.unparseable":
-		return "config.toml could not be fully read, so the mitigations are UNCONFIRMED -- verify it by hand"
+// configRows renders the config.toml state as ONE row per file. The config detector
+// evaluates the two upload mitigations independently and emits a finding for EACH, so a
+// config with neither set produced two findings that installation() rendered as two
+// identical "the upload mitigations are not both set" rows. This groups every config
+// finding by the file it came from and, instead of that vague phrase, names the actual
+// mitigations at fault -- which is what the reader has to change.
+func configRows(rep *model.Report, s Style) [][2]string {
+	type cfg struct {
+		absent, unparse, mitigated bool
+		notSet, wrongValue         []string // mitigation keys, e.g. harness.disable_codebase_upload
 	}
-	return "the upload mitigations are not both set"
+	byPath := map[string]*cfg{}
+	var order []string
+	get := func(path string) *cfg {
+		c, ok := byPath[path]
+		if !ok {
+			c = &cfg{}
+			byPath[path] = c
+			order = append(order, path)
+		}
+		return c
+	}
+	key := func(f model.Finding) string {
+		if len(f.Evidence) > 0 {
+			return f.Evidence[0].Locator // "table.key", set by the config detector
+		}
+		return ""
+	}
+	path := func(f model.Finding) string {
+		if len(f.Evidence) > 0 {
+			return f.Evidence[0].Path
+		}
+		return ""
+	}
+	for _, f := range rep.Findings {
+		switch f.ID {
+		case "config.absent":
+			get(path(f)).absent = true
+		case "config.unparseable":
+			get(path(f)).unparse = true
+		case "config.mitigated":
+			get(path(f)).mitigated = true
+		case "config.not_mitigated":
+			c := get(path(f))
+			c.notSet = append(c.notSet, key(f))
+		case "config.explicitly_disabled":
+			c := get(path(f))
+			c.wrongValue = append(c.wrongValue, key(f))
+		}
+	}
+
+	var rows [][2]string
+	for _, p := range order {
+		c := byPath[p]
+		var val string
+		switch {
+		case c.mitigated:
+			val = s.c(green, "MITIGATED") + " -- both upload mitigations set"
+		case c.absent:
+			val = s.c(yellow, "EXPOSED") + " -- no config.toml, so neither upload mitigation is set"
+		case c.unparse:
+			val = s.c(yellow, "EXPOSED") + " -- config.toml could not be fully read, so the mitigations are " +
+				"UNCONFIRMED -- verify it by hand"
+		default:
+			val = s.c(yellow, "EXPOSED") + " -- " + mitigationDetail(c.wrongValue, c.notSet)
+		}
+		// Every branch above names "mitigation(s)" without saying what they actually are.
+		// "(see below)" points at the MITIGATIONS section printed right after this table.
+		rows = append(rows, [2]string{"config.toml", val + " (see below)"})
+	}
+	return rows
+}
+
+// mitigations is the short lookup table the config.toml row's "(see below)" points at:
+// the two settings that must both hold, named exactly as they must appear in
+// config.toml. It is NOT the remediation prose the rest of this file deliberately
+// omits (see the note near the end) -- just the two lines, so a reader who was told
+// "mitigations" has something to check them against without leaving the terminal.
+//
+// Printed only when a config finding actually mentioned mitigations: a host with no
+// grok install never reaches this, and a section nothing points to is noise.
+func mitigations(w io.Writer, rep *model.Report, s Style) {
+	if !hasConfigFinding(rep) {
+		return
+	}
+	fmt.Fprintln(w, s.c(bold, "MITIGATIONS"))
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	for _, m := range config.Mitigations() {
+		fmt.Fprintf(tw, "  [%s]\t%s = %s\n", m.Table, m.Key, m.Want)
+	}
+	tw.Flush()
+	fmt.Fprintln(w)
+}
+
+func hasConfigFinding(rep *model.Report) bool {
+	for _, f := range rep.Findings {
+		switch f.ID {
+		case "config.mitigated", "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable":
+			return true
+		}
+	}
+	return false
+}
+
+// mitigationDetail names the mitigations at fault in one phrase: which are set to the
+// wrong value and which are missing entirely. Falls back to the generic wording only if
+// the finding carried no key (it always should).
+func mitigationDetail(wrong, notSet []string) string {
+	var parts []string
+	if n := joinKeys(wrong); n != "" {
+		parts = append(parts, n+" set to the wrong value")
+	}
+	if n := joinKeys(notSet); n != "" {
+		parts = append(parts, n+" not set")
+	}
+	if len(parts) == 0 {
+		return "the upload mitigations are not both set"
+	}
+	return strings.Join(parts, "; ")
+}
+
+// joinKeys drops empties and joins the mitigation keys with "and".
+func joinKeys(keys []string) string {
+	var out []string
+	for _, k := range keys {
+		if k != "" {
+			out = append(out, k)
+		}
+	}
+	return strings.Join(out, " and ")
 }
 
 const pad = "               "
@@ -1378,10 +1516,10 @@ func firstSentence(s string, max int) (string, bool) {
 // appended to every positive verdict is the part of a security report people learn
 // to scroll past.
 //
-// The advice itself is NOT lost: every finding still carries its own Remediation
-// string, written by the detector that raised it and emitted in --json. The config
-// detector in particular owns the text naming BOTH required settings, which is the
-// one piece of advice this tool must never get wrong.
+// The full advice is NOT lost either way: every finding still carries its own
+// Remediation string, written by the detector that raised it and emitted in --json. The
+// config detector in particular owns the text naming BOTH required settings, which is
+// the one piece of advice this tool must never get wrong.
 
 func wrap(s string, width int, indent string) string {
 	words := strings.Fields(s)

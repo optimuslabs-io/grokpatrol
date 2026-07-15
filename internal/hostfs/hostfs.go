@@ -138,3 +138,42 @@ func PriorityRoots(home string) []string {
 	}
 	return roots
 }
+
+// ResolveOnPath finds the executable a shell would run for one of names, searching
+// pathDirs in order exactly as the shell does, and returns both the $PATH entry and
+// its symlink-resolved real target. ok is false when none of the names is on $PATH.
+//
+// It lives here because hostfs is the only package permitted to touch the filesystem,
+// and it is READ-ONLY: Lstat and EvalSymlinks only read. It does NOT run a subprocess
+// -- os/exec.LookPath would, and would also stat outside this package, so the whole
+// resolution is done by hand instead.
+//
+// The RESOLVED target is what callers match a discovered install against, never the
+// entry's name: a grok installed by npm, bun or homebrew is a symlink on $PATH whose
+// real file sits under a bundle directory and is often named cli.js, so matching by
+// the entry name or its $PATH directory would miss exactly the common case. The exec
+// bit is deliberately not checked -- confirming the resolved file is a real grok is the
+// caller's job (it matches against the marker-carrying installs), and Lstat mode is the
+// symlink's, not the target's.
+func ResolveOnPath(pathDirs, names []string) (entry, resolved string, ok bool) {
+	for _, dir := range pathDirs {
+		if dir == "" {
+			continue
+		}
+		for _, name := range names {
+			cand := filepath.Join(dir, name)
+			fi, err := os.Lstat(cand)
+			if err != nil || fi.IsDir() {
+				continue
+			}
+			real, err := filepath.EvalSymlinks(cand)
+			if err != nil {
+				// A dangling symlink still means grok is nominally on $PATH; report the entry
+				// and let resolved fall back to it rather than dropping the signal.
+				real = cand
+			}
+			return cand, real, true
+		}
+	}
+	return "", "", false
+}

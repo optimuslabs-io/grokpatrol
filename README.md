@@ -106,13 +106,14 @@ exactly like a clean host.
 
 Exit codes, for scripting:
 
-| Code | Verdict | Meaning |
-|---|---|---|
-| `0` | CLEAN | No Grok artifacts, and the scan was not degraded |
-| `1` | — | The tool itself failed (bad flags, internal error). **Never used for findings.** |
-| `2` | INDETERMINATE | Nothing found, but parts of the host could not be read |
-| `3` | EXPOSED | Grok is present and unmitigated, and/or repositories were collected, queued or staged on your system — but no evidence the bytes were uploaded |
-| `4` | COMPROMISED | Evidence of upload — a delivery to xAI was confirmed (or an upload event the tool cannot classify, read as one) |
+| Code | Meaning |
+|---|---|
+| `0` | The scan ran and printed a report — whatever it found. Read `VERDICT` in the report, or `"verdict"` in `--json`, for the finding. |
+| `1` | The tool itself failed (bad flags, internal error). **Never used for a finding.** |
+
+The exit code answers only "did grokpatrol run" — it cannot tell you whether the host is
+CLEAN, INDETERMINATE, EXPOSED or COMPROMISED. Check the report (`--json | jq -r .verdict`
+for scripting) for that.
 
 ## What it looks at
 

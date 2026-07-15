@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -79,12 +80,6 @@ func run() int {
 		return 0
 	}
 
-	threshold, ok := model.ParseSeverity(*failOn)
-	if *failOn != "none" && !ok {
-		fmt.Fprintf(os.Stderr, "grokpatrol: unknown --fail-on value %q\n", *failOn)
-		return model.ExitToolError
-	}
-
 	if s := *historyScope; s != "head" && s != "all" && s != "none" {
 		fmt.Fprintf(os.Stderr, "grokpatrol: unknown --history-scope value %q\n", s)
 		return model.ExitToolError
@@ -99,6 +94,7 @@ func run() int {
 	env := &engine.Env{
 		Home:            h,
 		GrokHome:        hostfs.GrokHome(*grokHome, h),
+		PathDirs:        filepath.SplitList(os.Getenv("PATH")),
 		ScanRoots:       scanRoot,
 		FollowSymlinks:  *followLinks,
 		CrossFilesystem: *crossFS,
@@ -167,27 +163,11 @@ func run() int {
 		})
 	}
 
-	if *exitZero {
-		return 0
-	}
-	return exitCode(rep, threshold, *failOn == "none")
-}
-
-// exitCode maps the verdict onto the scripting contract. Findings never produce
-// exit 1: that code is reserved for a failure of the tool itself, so a caller can
-// always distinguish "grokpatrol broke" from "grokpatrol found something".
-func exitCode(rep *model.Report, threshold model.Severity, failNone bool) int {
-	if failNone {
-		return 0
-	}
-	if max, any := rep.MaxSeverity(); any && max < threshold {
-		// Findings exist but none reach the threshold the caller cares about.
-		if rep.Degraded {
-			return model.VerdictIndeterminate.ExitCode()
-		}
-		return 0
-	}
-	return rep.Verdict.ExitCode()
+	// Reaching this point means the scan ran and a report was produced -- whatever it
+	// found. The exit code answers only "did grokpatrol run", never "what did it find";
+	// the verdict is in the report body above (or --json), which is where a caller reads
+	// it. See model.ExitToolError.
+	return 0
 }
 
 // useColor decides per stream: the report goes to stdout and the progress monitor
@@ -240,11 +220,9 @@ USAGE
   grokpatrol [flags]
 
 EXIT CODES
-  0  CLEAN          no Grok artifacts, and the scan was not degraded
-  1  tool error     bad flags or an internal failure (never used for findings)
-  2  INDETERMINATE  nothing found, but parts of the host could not be read
-  3  EXPOSED        Grok present/unmitigated or repos collected or queued, no evidence of upload
-  4  COMPROMISED    evidence of upload -- a delivery confirmed, or an unclassifiable upload event
+  0  the scan ran and printed a report -- CLEAN, INDETERMINATE, EXPOSED or COMPROMISED
+     alike. Read VERDICT in the report (or "verdict" in --json) for the finding.
+  1  tool error -- bad flags or an internal failure. Never used for a finding.
 
 FLAGS
 `)

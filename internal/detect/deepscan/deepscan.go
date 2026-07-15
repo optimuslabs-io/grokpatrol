@@ -130,6 +130,15 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 			if structuralFile(path, e, &mu, &disc, addErr) {
 				return nil
 			}
+			// The upload_queue holds the victim's OWN staged data, not grok installs. Its
+			// codebase archives and metadata.json manifests are already recorded by name
+			// above (structuralFile); everything else here is queue bookkeeping. Marker-
+			// scanning it for an "installed binary" is meaningless -- a file in the outbound
+			// queue is payload, not the collector -- and on a queue of tens of thousands of
+			// files it is the walk's most expensive dead end. Record nothing else from it.
+			if underUploadQueue(path) {
+				return nil
+			}
 			// Reject by NAME before paying for an open+read+close. A home directory holds
 			// hundreds of thousands of files and syscalls dominated the first real run;
 			// an image or a font cannot be a grok binary whatever its bytes say.
@@ -236,6 +245,18 @@ func structuralDir(path string, e fs.DirEntry, mu *sync.Mutex, disc *engine.Disc
 	case ".grok":
 		disc.GrokHomes = appendUnique(disc.GrokHomes, path)
 	}
+}
+
+// underUploadQueue reports whether any ancestor directory in path is an upload_queue --
+// the same name structuralDir keys the queue off. A file below one is staged outbound
+// data, never a grok install, so the content scan skips it.
+func underUploadQueue(path string) bool {
+	for _, seg := range strings.Split(path, string(filepath.Separator)) {
+		if strings.EqualFold(seg, "upload_queue") {
+			return true
+		}
+	}
+	return false
 }
 
 // structuralFile reports whether the file was fully handled by a name-based rule
