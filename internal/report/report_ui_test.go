@@ -62,8 +62,10 @@ func TestFoundTallyLeadsWithNouns(t *testing.T) {
 		t.Error("the default report does not lead with a concrete 'found' tally")
 	}
 	// These contiguous phrases are unique to the tally (the headline says
-	// "repository collected" / "archive built and queued", not these).
-	for _, phrase := range []string{"repo collected", "archive queued", "secret exposed"} {
+	// "repository collected" / "archive built and queued", not these). "implicated"
+	// deliberately avoids the headline's "collected" so the two repo counts can't read
+	// as a contradiction.
+	for _, phrase := range []string{"repo implicated", "archive queued", "secret exposed"} {
 		if !strings.Contains(def, phrase) {
 			t.Errorf("the found tally is missing %q", phrase)
 		}

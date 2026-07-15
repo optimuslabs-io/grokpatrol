@@ -370,12 +370,18 @@ func countsLine(rep *model.Report) string {
 
 // foundTally is the default report's one-line scale, in the nouns the reader acts on
 // rather than severity buckets. "3 critical, 2 high" tells a security engineer the
-// shape of the finding list; "3 repos collected · 5 archives queued · 4 secrets
+// shape of the finding list; "3 repos implicated · 5 archives queued · 4 secrets
 // exposed" tells the person whose machine it is what happened. The severity counts are
 // not lost -- they move to --verbose (countsLine) and stay complete in --json
 // (rep.Counts). Returns "" for an install-only host with nothing collected, queued, or
 // exposed, so the caller falls back to the severity line rather than printing an empty
 // "Found:".
+//
+// "implicated", not "collected": this counts EVERY repo the ledger touched -- queued
+// and collected-only alike -- whereas the verdict headline says "N repository collected
+// and queued" about the queued set only. Reusing "collected" for the wider set here put
+// two different repo counts ("1 repository collected" vs "2 repos collected") on
+// adjacent lines, reading as a contradiction when both were correct.
 func foundTally(rep *model.Report) string {
 	repos, archives := 0, 0
 	for _, r := range rep.Repos {
@@ -389,7 +395,7 @@ func foundTally(rep *model.Report) string {
 
 	var parts []string
 	if repos > 0 {
-		parts = append(parts, engine.Plural(repos, "repo")+" collected")
+		parts = append(parts, engine.Plural(repos, "repo")+" implicated")
 	}
 	if archives > 0 {
 		parts = append(parts, engine.Plural(archives, "archive")+" queued")
