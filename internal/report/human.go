@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -25,6 +26,20 @@ type Style struct {
 	Verbose bool
 }
 
+// Colour is semantic, not decorative: a reader must be able to triage by colour
+// alone, so each code means one thing throughout this file.
+//
+//	red    -- act now: rotate, a confirmed delivery, a secret deleted-but-in-history,
+//	          a CRITICAL finding, a repository that was queued/collected.
+//	yellow -- exposure: EXPOSED verdict, a REPORTED-affected build, a MEDIUM finding.
+//	green  -- good: a mitigated config, a CLEAN verdict.
+//	cyan   -- a path the reader will act on (a repository, a secret's location).
+//	dim    -- context and provenance: the "how do you know" lines, source citations,
+//	          counts that are scale rather than a call to action.
+//	bold   -- a heading or the single most important token on its line.
+//
+// Nothing in this file should reach for a colour for emphasis alone; if a span is
+// coloured, the colour is carrying one of the meanings above.
 const (
 	reset  = "\033[0m"
 	bold   = "\033[1m"
@@ -220,17 +235,27 @@ func staging(w io.Writer, rep *model.Report, s Style) {
 			}
 			shown, omitted := s.capRows(f.Evidence)
 			for _, e := range shown {
-				label := e.Note
-				if e.SizeBytes > 0 {
-					label = fmt.Sprintf("%s, %s", e.Note, humanBytes(e.SizeBytes))
-				}
-				// The hash was always computed and always dropped before the terminal saw
-				// it -- while the section header promised "recorded by name and hash". An
-				// archive is the user's stolen source code and the only evidence of what
-				// was in it; the hash is what lets them prove later that the file they
-				// still have is the file that was staged.
-				if e.SHA256 != "" {
-					label = fmt.Sprintf("%s, sha256:%s", label, short(e.SHA256))
+				var label string
+				if s.Verbose {
+					// The full receipt: the detector's note, the size, and the sha256. The
+					// hash is what lets the reader prove later that a file they still have
+					// is the file that was staged -- so it is preserved, just moved off the
+					// default report, where a 64-char digest per row is pure noise.
+					label = e.Note
+					if e.SizeBytes > 0 {
+						label = fmt.Sprintf("%s, %s", e.Note, humanBytes(e.SizeBytes))
+					}
+					if e.SHA256 != "" {
+						label = fmt.Sprintf("%s, sha256:%s", label, short(e.SHA256))
+					}
+				} else if e.SizeBytes > 0 {
+					// Default: just the size. The section header already says every archive
+					// was recorded, not opened, so repeating "codebase archive (recorded,
+					// not opened)" on every row adds length without information.
+					label = humanBytes(e.SizeBytes)
+				} else {
+					// No size (a manifest, the queue dir): the note carries the meaning.
+					label = e.Note
 				}
 				b.rows = append(b.rows, [2]string{e.Path, label})
 			}
@@ -247,7 +272,11 @@ func staging(w io.Writer, rep *model.Report, s Style) {
 		return
 	}
 
-	fmt.Fprintln(w, s.c(bold, "STAGING")+s.c(dim, "   (archives were recorded by name and hash, never opened)"))
+	stagingNote := "   (recorded by name and hash, never opened -- --verbose for the hashes)"
+	if s.Verbose {
+		stagingNote = "   (recorded by name and hash, never opened)"
+	}
+	fmt.Fprintln(w, s.c(bold, "STAGING")+s.c(dim, stagingNote))
 	for _, b := range blocks {
 		fmt.Fprintf(w, "  %s\n", b.title)
 		if len(b.rows) == 0 {
@@ -302,8 +331,18 @@ func verdictBanner(w io.Writer, rep *model.Report, s Style) {
 	for _, line := range strings.Split(headline, "\n") {
 		fmt.Fprintln(w, "  "+line)
 	}
-	if line := countsLine(rep); line != "" {
-		fmt.Fprintf(w, "  %s\n", s.c(dim, line))
+	// The scale line, in the nouns the reader acts on rather than severity buckets.
+	// --verbose keeps the severity counts (countsLine); the default leads with what
+	// happened (foundTally), falling back to the severity line on an install-only host
+	// where nothing was collected, queued, or exposed to tally.
+	var scale string
+	if s.Verbose {
+		scale = countsLine(rep)
+	} else if scale = foundTally(rep); scale == "" {
+		scale = countsLine(rep)
+	}
+	if scale != "" {
+		fmt.Fprintf(w, "  %s\n", s.c(dim, scale))
 	}
 	fmt.Fprintln(w)
 }
@@ -327,6 +366,63 @@ func countsLine(rep *model.Report) string {
 		return ""
 	}
 	return strings.Join(parts, ", ")
+}
+
+// foundTally is the default report's one-line scale, in the nouns the reader acts on
+// rather than severity buckets. "3 critical, 2 high" tells a security engineer the
+// shape of the finding list; "3 repos implicated · 5 archives queued · 4 secrets
+// exposed" tells the person whose machine it is what happened. The severity counts are
+// not lost -- they move to --verbose (countsLine) and stay complete in --json
+// (rep.Counts). Returns "" for an install-only host with nothing collected, queued, or
+// exposed, so the caller falls back to the severity line rather than printing an empty
+// "Found:".
+//
+// "implicated", not "collected": this counts EVERY repo the ledger touched -- queued
+// and collected-only alike -- whereas the verdict headline says "N repository collected
+// and queued" about the queued set only. Reusing "collected" for the wider set here put
+// two different repo counts ("1 repository collected" vs "2 repos collected") on
+// adjacent lines, reading as a contradiction when both were correct.
+func foundTally(rep *model.Report) string {
+	repos, archives := 0, 0
+	for _, r := range rep.Repos {
+		switch r.Status {
+		case model.StatusDelivered, model.StatusQueued, model.StatusCollectedOnly:
+			repos++
+		}
+		archives += len(r.Archives)
+	}
+	secretFiles, _ := secretTotals(rep)
+
+	var parts []string
+	if repos > 0 {
+		parts = append(parts, engine.Plural(repos, "repo")+" implicated")
+	}
+	if archives > 0 {
+		parts = append(parts, engine.Plural(archives, "archive")+" queued")
+	}
+	if secretFiles > 0 {
+		parts = append(parts, engine.Plural(secretFiles, "secret")+" exposed")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Found: " + strings.Join(parts, " · ")
+}
+
+// secretTotals counts secret files across all repositories, and how many are the
+// priority class -- deleted from the checkout but still alive in the uploaded history.
+// Extracted so the secrets section, its examples block, and the found tally agree on
+// one set of numbers.
+func secretTotals(rep *model.Report) (total, deleted int) {
+	for _, r := range rep.Repos {
+		for _, h := range r.SecretFiles {
+			total++
+			if h.DeletedFromCheckout {
+				deleted++
+			}
+		}
+	}
+	return total, deleted
 }
 
 // hasDelivered reports whether any repository's upload was confirmed landed. It
@@ -470,55 +566,87 @@ func addUnique(list []string, v string) []string {
 	return append(list, v)
 }
 
+// installation is the inventory of the Grok install on this host. In the DEFAULT
+// report it is a summary: the config mitigation state -- which on an EXPOSED host is
+// the entire basis for the verdict -- and the grok binary's path. The receipt behind
+// it (the binary's sha256, the per-version inventory and the file each version was
+// read from, auth.json, and the other upload-related keys) prints under --verbose.
+//
+// The affected-build WARNING is not what moves: versionBanner hoists it directly
+// under the verdict on every run. What --verbose gates here is the version INVENTORY
+// -- the paths and the un-flagged versions behind that warning -- not the warning.
 func installation(w io.Writer, rep *model.Report, s Style) {
 	var lines [][2]string
+	withheld := false // did the default report drop receipt detail it should point at?
 
 	for _, f := range rep.Findings {
 		if f.ID == "deepscan.binary_marker" {
 			for _, e := range f.Evidence {
-				if strings.Contains(e.Note, scan.MarkerBucket) {
-					desc := fmt.Sprintf("%s (%s)\n%s contains %q at %s",
-						e.Path, humanBytes(e.SizeBytes), pad, scan.MarkerBucket, e.Locator)
-					// Identifies the exact build sitting on this disk -- which is what anyone
-					// comparing notes across a fleet, or against a vendor's published hashes,
-					// actually needs. It was computed and then thrown away.
-					if e.SHA256 != "" {
-						desc += fmt.Sprintf("\n%s sha256:%s", pad, e.SHA256)
-					}
-					lines = append(lines, [2]string{"grok binary", desc})
+				if !strings.Contains(e.Note, scan.MarkerBucket) {
+					continue
 				}
+				if !s.Verbose {
+					// The path is what locates the install. The sha256 and the offset are
+					// for someone diffing this build against a vendor's published hashes,
+					// which is a receipt task -- so they wait for --verbose.
+					lines = append(lines, [2]string{"grok binary", fmt.Sprintf("%s (%s)", e.Path, humanBytes(e.SizeBytes))})
+					withheld = withheld || e.SHA256 != ""
+					continue
+				}
+				desc := fmt.Sprintf("%s (%s)\n%s contains %q at %s",
+					e.Path, humanBytes(e.SizeBytes), pad, scan.MarkerBucket, e.Locator)
+				// Identifies the exact build sitting on this disk -- which is what anyone
+				// comparing notes across a fleet, or against a vendor's published hashes,
+				// actually needs. It was computed and then thrown away.
+				if e.SHA256 != "" {
+					desc += fmt.Sprintf("\n%s sha256:%s", pad, e.SHA256)
+				}
+				lines = append(lines, [2]string{"grok binary", desc})
 			}
 		}
 	}
 
-	for _, v := range rep.Versions {
-		if v.Confidence == "low" {
-			continue
+	// The per-version inventory is verbose-only: versionBanner already carried the
+	// one fact that matters -- this build is affected -- to the top of the report. The
+	// rows here add the PATH each version was read from and the versions that are not
+	// flagged at all, which is inventory, not headline.
+	if s.Verbose {
+		for _, v := range rep.Versions {
+			if v.Confidence == "low" {
+				continue
+			}
+			// The PATH, not the word "logs". A row reading "0.2.51  (logs)  REPORTED AFFECTED"
+			// names a category, not a location -- and on a host with four versions strewn across
+			// a rotated log history, which FILE each was read from is the difference between a
+			// build that ran once in May and the one running now. Every other evidence line in
+			// this report cites where it came from; this one asserted a version from nowhere.
+			//
+			// Source is the fallback for evidence that genuinely has no path.
+			where := v.Path
+			if where == "" {
+				where = "(" + v.Source + ")"
+			}
+			// Version-row rendering from upstream v0.1.5: UNKNOWN gets no verdict-shaped
+			// label -- "UNKNOWN" reads as an error, not a deliberate absence of one (see
+			// grokver.Class) -- but "read from" still cites where the version came from.
+			var row string
+			switch v.Class {
+			case model.VersionConfirmedAffected:
+				row = fmt.Sprintf("%s  %s  %s", v.Version, s.c(red, "CONFIRMED AFFECTED"), s.c(dim, where))
+			case model.VersionReportedAffected:
+				row = fmt.Sprintf("%s  %s  %s", v.Version, s.c(yellow, "REPORTED AFFECTED"), s.c(dim, where))
+			default:
+				row = fmt.Sprintf("%s  read from %s", v.Version, s.c(dim, where))
+			}
+			lines = append(lines, [2]string{"version", row})
 		}
-		// The PATH, not the word "logs". A row reading "0.2.51  (logs)  REPORTED AFFECTED"
-		// names a category, not a location -- and on a host with four versions strewn across
-		// a rotated log history, which FILE each was read from is the difference between a
-		// build that ran once in May and the one running now. Every other evidence line in
-		// this report cites where it came from; this one asserted a version from nowhere.
-		//
-		// Source is the fallback for evidence that genuinely has no path.
-		where := v.Path
-		if where == "" {
-			where = "(" + v.Source + ")"
+	} else {
+		for _, v := range rep.Versions {
+			if v.Confidence != "low" {
+				withheld = true
+				break
+			}
 		}
-		var row string
-		switch v.Class {
-		case model.VersionConfirmedAffected:
-			row = fmt.Sprintf("%s  %s  %s", v.Version, s.c(red, "CONFIRMED AFFECTED"), s.c(dim, where))
-		case model.VersionReportedAffected:
-			row = fmt.Sprintf("%s  %s  %s", v.Version, s.c(yellow, "REPORTED AFFECTED"), s.c(dim, where))
-		default:
-			// UNKNOWN carries no ground truth either way -- see grokver.Class -- so it gets
-			// no verdict-shaped label ("UNKNOWN" reads as an error, not a deliberate absence
-			// of one). "read from" still says where the version came from.
-			row = fmt.Sprintf("%s  read from %s", v.Version, s.c(dim, where))
-		}
-		lines = append(lines, [2]string{"version", row})
 	}
 
 	for _, f := range rep.Findings {
@@ -533,17 +661,23 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 			//
 			// The unparseable case is NOT dropped, only reworded: a config we could not read
 			// is a config whose mitigations are UNCONFIRMED, which is why the tool fails closed
-			// to EXPOSED. Deleting the row would delete the reason for the verdict.
+			// to EXPOSED. Deleting the row would delete the reason for the verdict. This row
+			// prints in BOTH modes for the same reason -- on an EXPOSED host it is the verdict.
 			lines = append(lines, [2]string{"config.toml", s.c(yellow, "EXPOSED") + " -- " + configState(f.ID)})
 		case "config.auth_present":
-			// Just "present". The parenthetical used to read "(grokpatrol did not read it)",
-			// which is true, but the INSTALLATION table is an inventory of what is on the
-			// machine -- not the place to advertise what this tool declines to do. The
-			// guarantee lives in the code (auth.json is never opened) and in the docs; a
-			// reader scanning an inventory column does not need it re-litigated per row.
-			lines = append(lines, [2]string{"auth.json", "present"})
+			// Verbose-only. auth.json's presence is inventory, not a lever the reader pulls,
+			// and it is a detail beside the config state that actually drives the verdict.
+			if s.Verbose {
+				lines = append(lines, [2]string{"auth.json", "present"})
+			} else {
+				withheld = true
+			}
 		case "config.other_keys":
-			lines = append(lines, [2]string{"other options", strings.TrimPrefix(f.Title, "Other upload-related options are set: ")})
+			if s.Verbose {
+				lines = append(lines, [2]string{"other options", strings.TrimPrefix(f.Title, "Other upload-related options are set: ")})
+			} else {
+				withheld = true
+			}
 		}
 	}
 
@@ -556,6 +690,12 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 		fmt.Fprintf(tw, "  %s\t%s\n", l[0], l[1])
 	}
 	tw.Flush()
+	// A summary that drops detail has to say it did, or it reads as the whole
+	// inventory -- and on an EXPOSED host with no exfil sections below, this may be
+	// the only place the default report names --verbose at all.
+	if withheld && !s.Verbose {
+		fmt.Fprintf(w, "  %s\n", s.c(dim, "run --verbose for the version inventory, binary hash, and the rest of the install"))
+	}
 	fmt.Fprintln(w)
 }
 
@@ -604,14 +744,38 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 	}
 
 	if len(rep.Repos) > 0 {
+		// Worst repos first, and in the DEFAULT report only the top maxLedgerRepos of
+		// them: a host with dozens of collected repos would otherwise push the verdict
+		// off the screen, the same failure the archive display cap exists to prevent.
+		// --verbose lists every repository; the true total is one line below the table.
+		rows := rep.Repos
+		omitted := 0
+		if !s.Verbose && len(rows) > maxLedgerRepos {
+			rows = append([]model.RepoStatus(nil), rep.Repos...)
+			sort.SliceStable(rows, func(i, j int) bool {
+				if a, b := statusRank(rows[i].Status), statusRank(rows[j].Status); a != b {
+					return a > b
+				}
+				return len(rows[i].Archives) > len(rows[j].Archives)
+			})
+			omitted = len(rows) - maxLedgerRepos
+			rows = rows[:maxLedgerRepos]
+		}
+
 		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s", s.c(dim, "REPOSITORY"), s.c(dim, "STATUS"), s.c(dim, "ATTEMPTS"), s.c(dim, "ARCHIVES"))
+		fmt.Fprintf(tw, "  %s\t%s", s.c(dim, "REPOSITORY"), s.c(dim, "STATUS"))
+		// ATTEMPTS is verbose-only: how many archives went OUT is what to act on, and
+		// the collect-attempt count is a second-order detail beside it.
+		if s.Verbose {
+			fmt.Fprintf(tw, "\t%s", s.c(dim, "ATTEMPTS"))
+		}
+		fmt.Fprintf(tw, "\t%s", s.c(dim, "ARCHIVES"))
 		if showAuth {
 			fmt.Fprintf(tw, "\t%s", s.c(dim, "UPLOAD 401s"))
 		}
 		fmt.Fprintf(tw, "\t%s\n", s.c(dim, "COLLECTED"))
 
-		for _, r := range rep.Repos {
+		for _, r := range rows {
 			status := r.Status
 			switch r.Status {
 			case model.StatusDelivered:
@@ -623,13 +787,28 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 			default:
 				status = s.c(dim, strings.ToUpper(r.Status))
 			}
-			fmt.Fprintf(tw, "  %s\t%s\t%d\t%s", r.RepoPath, status, r.CollectAttempts, archiveSummary(r))
+			fmt.Fprintf(tw, "  %s\t%s", r.RepoPath, status)
+			if s.Verbose {
+				fmt.Fprintf(tw, "\t%d", r.CollectAttempts)
+			}
+			// The archive count carries BOTH total and unique now -- the gap between
+			// them separates sustained collection from a retried failing upload -- so
+			// the separate "ARCHIVES QUEUED FOR UPLOAD" counts block is gone from the
+			// default report; --verbose still lists every gs:// object below.
+			fmt.Fprintf(tw, "\t%s", archiveSummary(r, s))
 			if showAuth {
 				fmt.Fprintf(tw, "\t%s", authSummary(r, s))
 			}
 			fmt.Fprintf(tw, "\t%s\n", collectedWindow(r))
 		}
 		tw.Flush()
+		if omitted > 0 {
+			noun := "repositories"
+			if omitted == 1 {
+				noun = "repository"
+			}
+			fmt.Fprintf(w, "  %s\n", s.c(dim, fmt.Sprintf("... and %d more %s (--verbose for all, --json for the record)", omitted, noun)))
+		}
 		archiveDetail(w, rep, s)
 	}
 
@@ -646,14 +825,26 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 	// text under the table, the very confirmation the table above it is reporting --
 	// so a host where delivery WAS proven says so instead.
 	if anyDelivered(rep) {
-		fmt.Fprintf(w, "\n  %s %s\n", s.c(red+bold, "delivery:"),
-			s.c(red, "CONFIRMED -- Grok's log records the transfer completing."))
-		fmt.Fprintf(w, "  %s\n", s.c(dim, "This is the strongest statement this tool can make. It is not inferred from"))
-		fmt.Fprintf(w, "  %s\n", s.c(dim, "collection or queueing: the upload itself was logged as finished."))
+		// The verdict headline already states the confirmed delivery in full ("CONFIRMED
+		// DELIVERED ... Grok's log records the transfer completing"), and the STATUS
+		// column reads DELIVERED. Repeating it a third time here is noise in the default
+		// report, so the elaboration is --verbose only.
+		if s.Verbose {
+			fmt.Fprintf(w, "\n  %s %s\n", s.c(red+bold, "delivery:"),
+				s.c(red, "CONFIRMED -- Grok's log records the transfer completing."))
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "This is the strongest statement this tool can make. It is not inferred from"))
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "collection or queueing: the upload itself was logged as finished."))
+		}
 	} else if delivery != nil {
 		fmt.Fprintf(w, "\n  %s %s\n", s.c(dim, "delivery:"), s.c(dim, delivery.Title))
-		fmt.Fprintf(w, "  %s\n", s.c(dim, "Grok logs no upload-completion event, so neither this tool nor the log can confirm"))
-		fmt.Fprintf(w, "  %s\n", s.c(dim, "the archives were delivered -- only that they were built and queued."))
+		// The standing "no upload-completion event" explanation is receipt-grade context,
+		// not a finding to act on -- the ARCHIVES column above is what to act on -- so the
+		// default report keeps just the one-line status and the reasoning waits for
+		// --verbose. A trim, not a retraction: the one-line status still says unconfirmed.
+		if s.Verbose {
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "Grok logs no upload-completion event, so neither this tool nor the log can confirm"))
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "the archives were delivered -- only that they were built and queued."))
+		}
 	}
 	fmt.Fprintln(w)
 }
@@ -695,29 +886,43 @@ func authSummary(r model.RepoStatus, s Style) string {
 	return s.c(yellow, fmt.Sprintf("%d", r.UploadAuthFailures))
 }
 
-// archiveSummary gives the archive count and the phase breakdown behind it.
-//
-// It COUNTS the phases rather than listing one letter per archive. The old form
-// printed the phase multiset literally -- a repo with 64 archives rendered as
-// "64 (a,a,a,...,b,b,b)", a 130-character cell that pushed the COLLECTED column off
-// the right edge of the terminal. The letters carried no information the counts do
-// not: sorted, they only ever said "some afters, then some befores". This is the
-// same fact, spelled short.
-//
-// Unrecognized phases are counted too, never dropped: phaseOf can return "unknown",
-// and a phase this renderer has not heard of still happened. An archive that
-// vanishes from the ARCHIVES column because nobody taught the printer its phase name
-// is a missing row in the one table that says what was taken.
-// archiveSummary is the count, and only the count. The phase breakdown that used to
-// ride along here ("64 (32 before, 32 after)") said nothing this table needs: Grok
-// snapshots the repo twice per turn, so the split is always just half and half, and
-// the phase of any individual archive is already spelled out in its gs:// path in
-// ARCHIVES QUEUED FOR UPLOAD below. What the ledger row owes the reader is the
-// magnitude -- how many full copies of this repository went out -- and that is one
-// number.
-func archiveSummary(r model.RepoStatus) string {
-	return fmt.Sprintf("%d", len(r.Archives))
+// archiveSummary is the ARCHIVES cell: total, and how many DISTINCT gs:// objects
+// that total names. The gap between the two is the signal -- "64 (12 unique)" is a
+// retried failing upload, "64 (64 unique)" is 64 separate snapshots -- which is why
+// this cell now carries both numbers and the separate ARCHIVES QUEUED counts block
+// was removed from the default report. A repo that was collected but never queued
+// shows a dash, not "0 (0 unique)": nothing went out to count.
+func archiveSummary(r model.RepoStatus, s Style) string {
+	total, unique, delivered := archiveCounts(r)
+	if total == 0 {
+		return s.c(dim, "-")
+	}
+	cell := fmt.Sprintf("%d (%d unique)", total, unique)
+	if delivered > 0 {
+		cell += ", " + s.c(red+bold, fmt.Sprintf("%d delivered", delivered))
+	}
+	return cell
 }
+
+// statusRank orders repositories worst-first for the capped ledger table, so the
+// top rows are the ones the reader most needs to see when the full list is withheld.
+func statusRank(status string) int {
+	switch status {
+	case model.StatusDelivered:
+		return 3
+	case model.StatusQueued:
+		return 2
+	case model.StatusCollectedOnly:
+		return 1
+	}
+	return 0
+}
+
+// maxLedgerRepos bounds the per-repo ledger table in the DEFAULT report, mirroring
+// maxEvidenceRows: a host with dozens of collected repositories would otherwise bury
+// the verdict. --verbose lists every repository and --json is the complete record, so
+// the cap is display-only and the true total is printed beside it.
+const maxLedgerRepos = 10
 
 // collectedWindow shows the span over which Grok was reading this repository,
 // rather than the single date the ledger used to print. One date reads like one
@@ -750,6 +955,16 @@ func collectedWindow(r model.RepoStatus) string {
 // queued and never learn where they went, which is the difference between being
 // told you were robbed and being shown the receipt.
 func archiveDetail(w io.Writer, rep *model.Report, s Style) {
+	// WITHOUT --verbose the per-repo archive counts live in the ledger table's ARCHIVES
+	// column ("64 (12 unique)"), so this section prints nothing in the default report
+	// except the collected-only citations -- the separate "ARCHIVES QUEUED FOR UPLOAD"
+	// counts block was consolidated into the table. --verbose still lists every gs://
+	// object with its provenance, and --json is complete.
+	if !s.Verbose {
+		citations(w, rep, s)
+		return
+	}
+
 	var withArchives []model.RepoStatus
 	for _, r := range rep.Repos {
 		if len(r.Archives) > 0 {
@@ -763,40 +978,10 @@ func archiveDetail(w io.Writer, rep *model.Report, s Style) {
 		return
 	}
 
-	// WITHOUT --verbose this section is COUNTS, not paths.
-	//
-	// Unique is reported alongside the total because they are different facts and the gap
-	// between them means something. An enqueue event is logged per ATTEMPT, so the same
-	// gs:// object can be enqueued repeatedly when an upload is retried; correlate counts
-	// those retries rather than deduping them, on purpose ("duplicates are retries; they
-	// are counted, not deduped"). So the total is how many times Grok tried to ship an
-	// archive, and unique is how many distinct objects your code was written to. A host
-	// with 64 archives and 12 unique objects retried hard; one with 64 and 64 shipped 64
-	// separate snapshots. Printing only the total would hide which happened.
-	//
-	// --verbose prints every gs:// object with its provenance; --json is complete.
-	fmt.Fprintf(w, "\n  %s", s.c(bold, "ARCHIVES QUEUED FOR UPLOAD"))
-	if s.Verbose {
-		fmt.Fprintf(w, "%s\n", s.c(dim, "   (one line per archive, as recorded in Grok's own logs)"))
-	} else {
-		fmt.Fprintf(w, "%s\n", s.c(dim, "   (counts only -- --verbose lists every gs:// object)"))
-	}
-
-	if !s.Verbose {
-		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-		for _, r := range withArchives {
-			total, unique, delivered := archiveCounts(r)
-			cell := fmt.Sprintf("%s, %d unique %s",
-				engine.Plural(total, "archive"), unique, plainPlural(unique, "object"))
-			if delivered > 0 {
-				cell += ", " + s.c(red+bold, fmt.Sprintf("%d DELIVERY CONFIRMED", delivered))
-			}
-			fmt.Fprintf(tw, "  %s\t%s\n", s.c(cyan, r.RepoPath), s.c(red, cell))
-		}
-		tw.Flush()
-		citations(w, rep, s)
-		return
-	}
+	// The gs:// path is the single most important string in the report -- the model
+	// calls it the smoking gun -- so --verbose prints every one with its provenance.
+	fmt.Fprintf(w, "\n  %s%s\n", s.c(bold, "ARCHIVES QUEUED FOR UPLOAD"),
+		s.c(dim, "   (one line per archive, as recorded in Grok's own logs)"))
 
 	for _, r := range withArchives {
 		fmt.Fprintf(w, "  %s\n", s.c(cyan, r.RepoPath))
@@ -832,15 +1017,6 @@ func archiveCounts(r model.RepoStatus) (total, unique, delivered int) {
 		}
 	}
 	return total, unique, delivered
-}
-
-// plainPlural pluralizes a noun without prefixing the count, for use inside a phrase
-// that has already printed the number.
-func plainPlural(n int, noun string) string {
-	if n == 1 {
-		return noun
-	}
-	return noun + "s"
 }
 
 // archiveProvenance is the "how do you know" line: session, turn, timestamp, and
@@ -919,8 +1095,10 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 	// they cannot find by looking at their own repository. The names, classes and blob
 	// ids are one --verbose away and complete in --json.
 	if !s.Verbose {
+		// Per-repo counts first -- this loop carries the headline number the reader acts
+		// on: how many secrets, and how many are gone from the checkout but still in the
+		// uploaded history (the ones they cannot find by looking at their own repo).
 		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-		total, totalDeleted := 0, 0
 		for _, r := range rep.Repos {
 			if len(r.SecretFiles) == 0 {
 				continue
@@ -931,9 +1109,6 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 					deleted++
 				}
 			}
-			total += len(r.SecretFiles)
-			totalDeleted += deleted
-
 			count := engine.Plural(len(r.SecretFiles), "secret file")
 			if deleted > 0 {
 				count += ", " + s.c(red+bold, fmt.Sprintf("%d deleted from the checkout but still in history", deleted))
@@ -941,7 +1116,28 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 			fmt.Fprintf(tw, "  %s\t%s\n", s.c(cyan, r.RepoPath), count)
 		}
 		tw.Flush()
-		if total > 0 {
+
+		// Numbers + a few EXAMPLES: the default report now names WHICH files to rotate
+		// -- deleted-from-checkout first, diversified by risk class -- without becoming
+		// the full rotation list. Filename, class and risk only; never a value, and the
+		// blob id stays a --verbose receipt.
+		if shown, omitted := secretExamples(rep); len(shown) > 0 {
+			fmt.Fprintf(w, "\n  %s\n", s.c(dim, "examples:"))
+			etw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+			for _, h := range shown {
+				name, class, risk := secretExampleRow(h, s)
+				fmt.Fprintf(etw, "    %s\t%s\t%s\n", name, class, risk)
+			}
+			etw.Flush()
+			if omitted > 0 {
+				fmt.Fprintf(w, "    %s\n", s.c(dim, fmt.Sprintf("... and %d more (--verbose)", omitted)))
+			}
+		}
+
+		// External-scanner findings (e.g. Betterleaks) render here, under their own
+		// sub-header, without touching the counts or examples above.
+
+		if total, totalDeleted := secretTotals(rep); total > 0 {
 			fmt.Fprintf(w, "\n  %s\n", s.c(dim,
 				fmt.Sprintf("%s found. --verbose lists them by name, class and blob id; --json has the full record.",
 					engine.Plural(total, "secret file"))))
@@ -984,6 +1180,74 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		fmt.Fprintf(w, "  %s\n", s.c(dim, "grokpatrol never runs that command: it cannot read a secret it reports."))
 	}
 	fmt.Fprintln(w)
+}
+
+// maxSecretExamples bounds the example rows in the DEFAULT secrets section. Three,
+// not ten: the examples exist to show WHICH files to rotate first and what CLASSES are
+// exposed, not to be the rotation list -- that is --verbose. Three fit under the
+// verdict, and the true total is always in the count lines and --json.
+const maxSecretExamples = 3
+
+// secretExamples picks a few representative hits for the default report: deleted-from-
+// checkout first (they already sort first, from detect/secrets sortHits), and
+// diversified by class so the sample shows a range of risk shapes rather than three
+// dotenvs. Returns the chosen hits and how many were withheld.
+func secretExamples(rep *model.Report) (shown []model.SecretHit, omitted int) {
+	var all []model.SecretHit
+	for _, r := range rep.Repos {
+		all = append(all, r.SecretFiles...)
+	}
+
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].DeletedFromCheckout != all[j].DeletedFromCheckout {
+			return all[i].DeletedFromCheckout
+		}
+		if all[i].Class != all[j].Class {
+			return all[i].Class < all[j].Class
+		}
+		return all[i].Path < all[j].Path
+	})
+	picked := make([]bool, len(all))
+	seenClass := map[string]bool{}
+	// First pass: one hit per unseen class, preserving the deleted-first order.
+	for i, h := range all {
+		if len(shown) >= maxSecretExamples {
+			break
+		}
+		if !seenClass[h.Class] {
+			seenClass[h.Class] = true
+			picked[i] = true
+			shown = append(shown, h)
+		}
+	}
+	// Second pass: if there were fewer distinct classes than the cap, fill the rest in
+	// order so the sample is still full.
+	for i, h := range all {
+		if len(shown) >= maxSecretExamples {
+			break
+		}
+		if !picked[i] {
+			picked[i] = true
+			shown = append(shown, h)
+		}
+	}
+	return shown, len(all) - len(shown)
+}
+
+// secretExampleRow formats one example: the filename, the risk class in brackets, and
+// the risk phrase. No blob id -- that is a --verbose receipt. The deleted phrase is
+// deliberately distinct from the per-repo count line's "deleted from the checkout but
+// still in history" so neither a reader nor a guard test can confuse the sample row
+// with the headline count.
+func secretExampleRow(h model.SecretHit, s Style) (name, class, risk string) {
+	name = h.Path
+	class = s.c(dim, "["+h.Class+"]")
+	if h.DeletedFromCheckout {
+		risk = s.c(red, "deleted from checkout, still in history")
+	} else {
+		risk = s.c(dim, "in HEAD")
+	}
+	return name, class, risk
 }
 
 // blobCol renders the object id, abbreviated. A working-tree-only hit has no blob
@@ -1060,13 +1324,53 @@ func limitations(w io.Writer, rep *model.Report, s Style) {
 	if len(rep.Limitations) == 0 {
 		return
 	}
-	// Printed on EVERY run, including a clean one. Nobody should read "CLEAN"
-	// without also reading what this tool structurally cannot see.
+	// Printed on EVERY run, including a clean one. Nobody should read "CLEAN" without
+	// also reading what this tool structurally cannot see. But five fully-wrapped
+	// paragraphs bury the rest of the report, so the default shortens each caveat to its
+	// first sentence -- enough to NAME the blind spot -- and --verbose gives the full text.
+	// Every caveat still appears; the invariant is that none is dropped, not that each is
+	// spelled out in full.
 	fmt.Fprintln(w, s.c(bold, "WHAT THIS SCAN COULD NOT SEE"))
+	truncated := false
 	for _, l := range rep.Limitations {
-		fmt.Fprintf(w, "  %s %s\n", s.c(dim, "-"), wrap(l, 92, "    "))
+		text := l
+		if !s.Verbose {
+			var cut bool
+			if text, cut = firstSentence(l, 96); cut {
+				truncated = true
+			}
+		}
+		fmt.Fprintf(w, "  %s %s\n", s.c(dim, "-"), wrap(text, 92, "    "))
+	}
+	if truncated {
+		fmt.Fprintf(w, "  %s\n", s.c(dim, "  --verbose spells out each caveat in full."))
 	}
 	fmt.Fprintln(w)
+}
+
+// firstSentence returns the first sentence of s (through the first ". "), or s cut on
+// a word boundary at max with an ellipsis when there is no early sentence break. The
+// bool reports whether anything was dropped, so the caller can point at --verbose.
+func firstSentence(s string, max int) (string, bool) {
+	// The first clause break -- a sentence end (". ") or a lead-in colon (": ") -- gives
+	// a clean summary; some caveats front-load the point before a colon.
+	end := -1
+	for _, sep := range []string{". ", ": "} {
+		if i := strings.Index(s, sep); i >= 0 && (end < 0 || i < end) {
+			end = i + 1 // keep the '.' or ':'
+		}
+	}
+	if end >= 0 && end <= max {
+		return s[:end], true
+	}
+	if len(s) <= max {
+		return s, false
+	}
+	cut := s[:max]
+	if sp := strings.LastIndex(cut, " "); sp > 0 {
+		cut = cut[:sp]
+	}
+	return cut + " ...", true
 }
 
 // There is no REMEDIATION section. The terminal report says what was found and

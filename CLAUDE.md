@@ -106,8 +106,21 @@ what survived; every path-bearing field must be listed in its walk.
 Three modes: default **summary** (totals + what matters most, points to `--verbose`/`--json`),
 `--verbose` (full receipt: every destination, every secret file/blob id), `--json` (canonical
 structured record). Archive counts are **total and unique** — the gap between them (e.g. "64
-archives, 12 unique objects") separates sustained collection from a retried failing upload. Version
-evidence cites the specific log file it came from, since rotated logs may disagree.
+(12 unique)") separates sustained collection from a retried failing upload. Version evidence
+cites the specific log file it came from, since rotated logs may disagree.
+
+The default report holds to one rule — lead with the number, show a few examples, point to
+`--verbose`/`--json` for the rest. INSTALLATION is a summary (binary path + config state; the
+sha256, per-version inventory, `auth.json` and other keys are `--verbose`). SECRETS shows counts
+plus a few risk-classified example filenames (deleted-from-checkout first), never a value or blob
+id. The EXFILTRATION LEDGER is one table (archive total+unique in the ARCHIVES cell; `ATTEMPTS`
+and the full `gs://` list under `--verbose`), capped to the worst `maxLedgerRepos` repositories by
+default. The verdict line leads with a concrete `Found: N repos · M archives · K secrets` tally;
+severity counts move to `--verbose`. Colour is semantic (red = act now, yellow = exposure, cyan =
+a path, green = clean, dim = context). An animated `GROKPATROL` logo (ported from
+`optimuslabs-io/perceptron`) plays on **stderr** at scan start — TTY + colour only,
+`--no-animation` / `GROKPATROL_NO_ANIM` / `--quiet` skip it — never stdout, so `--json | jq` is
+untouched.
 
 ## Conventions
 
