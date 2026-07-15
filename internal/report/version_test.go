@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 func render(t *testing.T, rep *model.Report) string {

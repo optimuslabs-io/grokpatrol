@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // fixtureRepo builds a throwaway git repo that commits two secrets and then

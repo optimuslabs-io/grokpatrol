@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/model"
-	"github.com/optimuslabs/grokpatrol/internal/scan"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/scan"
 )
 
 // queueHome builds a fake ~/.grok/upload_queue holding n staged archives, each with

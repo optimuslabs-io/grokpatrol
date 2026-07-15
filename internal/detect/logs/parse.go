@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/scan"
+	"github.com/optimuslabs-io/grokpatrol/internal/scan"
 )
 
 // The field names below come from a secondhand report of Grok's log schema, and

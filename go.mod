@@ -1,4 +1,4 @@
-module github.com/optimuslabs/grokpatrol
+module github.com/optimuslabs-io/grokpatrol
 
 go 1.26
 

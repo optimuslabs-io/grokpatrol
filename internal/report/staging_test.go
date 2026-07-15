@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // bigQueue models the case that motivated the display cap: a real host whose

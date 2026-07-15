@@ -15,17 +15,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/buildinfo"
-	cfgdet "github.com/optimuslabs/grokpatrol/internal/detect/config"
-	"github.com/optimuslabs/grokpatrol/internal/detect/deepscan"
-	"github.com/optimuslabs/grokpatrol/internal/detect/logs"
-	"github.com/optimuslabs/grokpatrol/internal/detect/queue"
-	"github.com/optimuslabs/grokpatrol/internal/detect/secrets"
-	"github.com/optimuslabs/grokpatrol/internal/detect/version"
-	"github.com/optimuslabs/grokpatrol/internal/engine"
-	"github.com/optimuslabs/grokpatrol/internal/hostfs"
-	"github.com/optimuslabs/grokpatrol/internal/model"
-	"github.com/optimuslabs/grokpatrol/internal/report"
+	"github.com/optimuslabs-io/grokpatrol/internal/buildinfo"
+	cfgdet "github.com/optimuslabs-io/grokpatrol/internal/detect/config"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/deepscan"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/logs"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/queue"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/secrets"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/version"
+	"github.com/optimuslabs-io/grokpatrol/internal/engine"
+	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/report"
 )
 
 type repeatable []string

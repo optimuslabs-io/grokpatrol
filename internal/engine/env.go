@@ -3,7 +3,7 @@ package engine
 import (
 	"time"
 
-	"github.com/optimuslabs/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
 // Env is the immutable input handed to every detector.
