@@ -126,11 +126,13 @@ func run() int {
 	if !*quiet {
 		style := report.Style{Color: useColor(*colorMode, os.Stderr)}
 		p := report.NewProgress(os.Stderr, style)
-		// The animated logo plays only into a real terminal: colour on (which
-		// useColor ties to stderr being a TTY) and not opted out. A pipe, a redirect,
-		// NO_COLOR, --color never, --no-animation, or GROKPATROL_NO_ANIM all skip it,
-		// so no escape code ever reaches a non-terminal and stdout is never touched.
-		if style.Color && !*noAnim && os.Getenv("GROKPATROL_NO_ANIM") == "" {
+		// The animated logo plays only into a real terminal. It is gated on stderr being
+		// a TTY DIRECTLY -- not just on colour -- because --color=always forces colour on
+		// even when stderr is redirected to a file, and the animation emits cursor-motion
+		// escapes that must never reach a non-terminal. A pipe, a redirect, NO_COLOR,
+		// --color never, --no-animation, or GROKPATROL_NO_ANIM all skip it, and stdout is
+		// never touched regardless.
+		if style.Color && isTerminal(os.Stderr) && !*noAnim && os.Getenv("GROKPATROL_NO_ANIM") == "" {
 			p.Splash()
 		}
 		p.Header(env.Home)
@@ -199,11 +201,15 @@ func useColor(mode string, f *os.File) bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}
+	return isTerminal(f)
+}
+
+// isTerminal reports whether f is a character device (a real terminal). The animated
+// logo emits cursor-motion escapes, so it is gated on this DIRECTLY: useColor("always")
+// returns true even when stderr is redirected to a file, and that must not animate.
+func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // defaultConcurrency is capped because this work is IO-bound: on a spinning disk

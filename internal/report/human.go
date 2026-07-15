@@ -1198,6 +1198,15 @@ func secretExamples(rep *model.Report) (shown []model.SecretHit, omitted int) {
 		all = append(all, r.SecretFiles...)
 	}
 
+	// Deleted-from-checkout hits sort first ACROSS repos, not just within each.
+	// detect/secrets orders each repo's hits deleted-first, but concatenating repos in
+	// report order can front-load an in-HEAD hit from an earlier repo and crowd the
+	// deleted ones -- the whole point of the sample -- out of the cap. A stable
+	// partition keeps deleted hits ahead while preserving each repo's internal order.
+	sort.SliceStable(all, func(i, j int) bool {
+		return all[i].DeletedFromCheckout && !all[j].DeletedFromCheckout
+	})
+
 	picked := make([]bool, len(all))
 	seenClass := map[string]bool{}
 	// First pass: one hit per unseen class, preserving the deleted-first order.

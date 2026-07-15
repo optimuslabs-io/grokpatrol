@@ -55,6 +55,42 @@ func TestSecretsShowExamplesInDefault(t *testing.T) {
 	}
 }
 
+// Deleted-from-checkout hits must sort first across ALL repos, not just within each.
+// A repo of in-HEAD-only secrets listed before a repo with deleted ones must not crowd
+// the deleted ones out of the sample -- they are the whole reason the examples exist.
+func TestSecretExamplesPrioritizeDeletedAcrossRepos(t *testing.T) {
+	rep := &model.Report{
+		Verdict: model.VerdictExposed,
+		Repos: []model.RepoStatus{
+			{
+				RepoPath: "~/work/clean-ish", // listed FIRST, all in-HEAD
+				Status:   model.StatusCollectedOnly,
+				SecretFiles: []model.SecretHit{
+					{Path: "config/app.env", Class: "dotenv", InHistory: true},
+					{Path: "deploy/service-account.json", Class: "cloud-credential", InHistory: true},
+					{Path: "infra/terraform.tfvars", Class: "iac-secret", InHistory: true},
+				},
+			},
+			{
+				RepoPath: "~/work/payments", // listed SECOND, has the deleted ones
+				Status:   model.StatusQueued,
+				SecretFiles: []model.SecretHit{
+					{Path: ".env.production", Class: "dotenv", Blob: "dead", InHistory: true, DeletedFromCheckout: true},
+					{Path: "id_rsa", Class: "private-key", Blob: "beef", InHistory: true, DeletedFromCheckout: true},
+				},
+			},
+		},
+	}
+
+	def := renderStyle(rep, Style{})
+	if !strings.Contains(def, ".env.production") || !strings.Contains(def, "id_rsa") {
+		t.Error("deleted-from-checkout secrets were crowded out of the examples by an earlier in-HEAD repo")
+	}
+	if !strings.Contains(def, "deleted from checkout, still in history") {
+		t.Error("the priority (deleted) class is not surfaced in the examples")
+	}
+}
+
 // Change D: the default report leads with a concrete noun tally, not severity buckets.
 func TestFoundTallyLeadsWithNouns(t *testing.T) {
 	def := renderStyle(compromised(), Style{})
