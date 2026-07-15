@@ -126,11 +126,14 @@ func run() int {
 	if !*quiet {
 		style := report.Style{Color: useColor(*colorMode, os.Stderr)}
 		p := report.NewProgress(os.Stderr, style)
-		// The animated logo plays only into a real terminal: colour on (which
-		// useColor ties to stderr being a TTY) and not opted out. A pipe, a redirect,
-		// NO_COLOR, --color never, --no-animation, or GROKPATROL_NO_ANIM all skip it,
-		// so no escape code ever reaches a non-terminal and stdout is never touched.
-		if style.Color && !*noAnim && os.Getenv("GROKPATROL_NO_ANIM") == "" {
+		// The animated logo plays only into a real terminal: colour on and stderr being a
+		// TTY, and not opted out. A pipe/redirect, NO_COLOR, --color never, --no-animation,
+		// or GROKPATROL_NO_ANIM all skip it.
+		stderrIsTTY := false
+		if fi, err := os.Stderr.Stat(); err == nil {
+			stderrIsTTY = fi.Mode()&os.ModeCharDevice != 0
+		}
+		if stderrIsTTY && style.Color && !*noAnim && os.Getenv("GROKPATROL_NO_ANIM") == "" {
 			p.Splash()
 		}
 		p.Header(env.Home)
