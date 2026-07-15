@@ -62,9 +62,6 @@ func (s Style) c(code, text string) string {
 // the verdict, then what was taken, then what to rotate, then what we could not
 // see, then what to do. Anything that would bury the rotation list goes below it.
 func Human(w io.Writer, rep *model.Report, s Style) {
-	fmt.Fprintf(w, "%s %s  (%s/%s)  scanned in %s\n\n",
-		s.c(bold, "grokpatrol"), rep.Tool.Version, rep.Host.GOOS, rep.Host.GOARCH, rep.Duration)
-
 	verdictBanner(w, rep, s)
 	if s.Quiet {
 		return
