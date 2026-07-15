@@ -70,3 +70,51 @@ func TestInstallationSummarizesByDefault(t *testing.T) {
 		}
 	}
 }
+
+// The config detector evaluates each of the two upload mitigations independently, so a
+// host with NEITHER set legitimately emits two config.not_mitigated findings -- one per
+// missing key, each with its own Title for --json and remediation. Both render to the
+// identical INSTALLATION row, and the renderer must print that state ONCE. A second copy
+// carries no information (the row already says "not both set") and reads like the tool
+// double-counting -- which is exactly what showed up on the demo host.
+func TestNeitherMitigationSetPrintsOneConfigRow(t *testing.T) {
+	rep := &model.Report{
+		Verdict: model.VerdictExposed,
+		Findings: []model.Finding{
+			{
+				ID: "config.not_mitigated", Detector: "config", Severity: model.SevMedium,
+				Title: "disable_codebase_upload = true is not set under [harness]",
+			},
+			{
+				ID: "config.not_mitigated", Detector: "config", Severity: model.SevMedium,
+				Title: "trace_upload = false is not set under [telemetry]",
+			},
+		},
+	}
+
+	out := renderStyle(rep, Style{})
+	if n := strings.Count(out, "the upload mitigations are not both set"); n != 1 {
+		t.Fatalf("config.toml EXPOSED row printed %d times, want exactly 1:\n%s", n, out)
+	}
+}
+
+// Deduping is on the RENDERED row, not the finding ID: two grok homes in genuinely
+// different config states must both appear, because each row tells the reader something
+// the other does not. Collapsing distinct states would hide a home that needs attention.
+func TestDistinctConfigStatesBothPrint(t *testing.T) {
+	rep := &model.Report{
+		Verdict: model.VerdictExposed,
+		Findings: []model.Finding{
+			{ID: "config.absent", Detector: "config", Severity: model.SevMedium, Title: "No Grok config.toml under ~/.grok"},
+			{ID: "config.unparseable", Detector: "config", Severity: model.SevMedium, Title: "config.toml uses constructs this scanner does not model"},
+		},
+	}
+
+	out := renderStyle(rep, Style{})
+	if !strings.Contains(out, configState("config.absent")) {
+		t.Errorf("the absent-config state row is missing:\n%s", out)
+	}
+	if !strings.Contains(out, configState("config.unparseable")) {
+		t.Errorf("the unparseable-config state row is missing:\n%s", out)
+	}
+}

@@ -649,10 +649,28 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 		}
 	}
 
+	// One config.toml state can map to MANY findings on purpose: the detector evaluates
+	// each of the two upload mitigations independently, so a host with NEITHER set emits
+	// two config.not_mitigated findings -- one per missing key, each with its own Title
+	// for --json and remediation. Both collapse to the identical INSTALLATION row, and
+	// without this guard that row printed twice: the summary already says "not both set",
+	// so a second identical copy adds no information, only doubt about whether the tool is
+	// double-counting. Dedupe on the RENDERED row, not the finding ID, so two homes in
+	// genuinely different states (one absent, one unparseable) still print two distinct
+	// rows -- each of which tells the reader something the other does not.
+	seenConfigRow := map[string]bool{}
+	addConfigRow := func(row string) {
+		if seenConfigRow[row] {
+			return
+		}
+		seenConfigRow[row] = true
+		lines = append(lines, [2]string{"config.toml", row})
+	}
+
 	for _, f := range rep.Findings {
 		switch f.ID {
 		case "config.mitigated":
-			lines = append(lines, [2]string{"config.toml", s.c(green, "MITIGATED") + " -- both upload mitigations set"})
+			addConfigRow(s.c(green, "MITIGATED") + " -- both upload mitigations set")
 		case "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable":
 			// A short, plain phrase per case rather than the finding's Title. The titles are
 			// written to stand alone in --json and one of them ("config.toml uses constructs
@@ -663,7 +681,7 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 			// is a config whose mitigations are UNCONFIRMED, which is why the tool fails closed
 			// to EXPOSED. Deleting the row would delete the reason for the verdict. This row
 			// prints in BOTH modes for the same reason -- on an EXPOSED host it is the verdict.
-			lines = append(lines, [2]string{"config.toml", s.c(yellow, "EXPOSED") + " -- " + configState(f.ID)})
+			addConfigRow(s.c(yellow, "EXPOSED") + " -- " + configState(f.ID))
 		case "config.auth_present":
 			// Verbose-only. auth.json's presence is inventory, not a lever the reader pulls,
 			// and it is a detail beside the config state that actually drives the verdict.
