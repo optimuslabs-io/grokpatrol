@@ -495,12 +495,6 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 		if v.Confidence == "low" {
 			continue
 		}
-		note := v.Class
-		if v.Class == model.VersionConfirmedAffected {
-			note = s.c(red, "CONFIRMED AFFECTED")
-		} else if v.Class == model.VersionReportedAffected {
-			note = s.c(yellow, "REPORTED AFFECTED")
-		}
 		// The PATH, not the word "logs". A row reading "0.2.51  (logs)  REPORTED AFFECTED"
 		// names a category, not a location -- and on a host with four versions strewn across
 		// a rotated log history, which FILE each was read from is the difference between a
@@ -512,8 +506,19 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 		if where == "" {
 			where = "(" + v.Source + ")"
 		}
-		lines = append(lines, [2]string{"version",
-			fmt.Sprintf("%s  %s  %s", v.Version, note, s.c(dim, where))})
+		var row string
+		switch v.Class {
+		case model.VersionConfirmedAffected:
+			row = fmt.Sprintf("%s  %s  %s", v.Version, s.c(red, "CONFIRMED AFFECTED"), s.c(dim, where))
+		case model.VersionReportedAffected:
+			row = fmt.Sprintf("%s  %s  %s", v.Version, s.c(yellow, "REPORTED AFFECTED"), s.c(dim, where))
+		default:
+			// UNKNOWN carries no ground truth either way -- see grokver.Class -- so it gets
+			// no verdict-shaped label ("UNKNOWN" reads as an error, not a deliberate absence
+			// of one). "read from" still says where the version came from.
+			row = fmt.Sprintf("%s  read from %s", v.Version, s.c(dim, where))
+		}
+		lines = append(lines, [2]string{"version", row})
 	}
 
 	for _, f := range rep.Findings {
