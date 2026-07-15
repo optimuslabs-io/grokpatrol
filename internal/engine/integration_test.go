@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,12 @@ import (
 // someone could rewire the detector phases, `make check` would stay green, and the
 // tool would quietly stop reporting COMPROMISED on a genuinely compromised host --
 // which is the only failure that actually matters here.
+//
+// The fixture and the scan run once and feed two subtests (verdict/findings, and
+// the never-leak-the-token guarantee) rather than each rebuilding two real git
+// repositories and re-running the whole engine: building this fixture is the most
+// expensive thing in the test suite, dominated by subprocess-spawn cost that a
+// race-instrumented binary on a shared CI runner pays dearly for.
 func TestCompromisedHostEndToEnd(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -37,90 +44,86 @@ func TestCompromisedHostEndToEnd(t *testing.T) {
 	home := buildFakeHome(t)
 	rep := scanHome(t, home)
 
-	if rep.Verdict != model.VerdictCompromised {
-		t.Fatalf("verdict = %s, want COMPROMISED\nfindings: %s", rep.Verdict, ids(rep))
-	}
-	if got := rep.Verdict.ExitCode(); got != 4 {
-		t.Errorf("exit code = %d, want 4", got)
-	}
-
-	// Every detector must have fired. If one silently stops contributing, the verdict
-	// can still come out right for the wrong reason -- so each is asserted by name.
-	for _, want := range []string{
-		"logs.archive_enqueued",         // proof of upload, from the log ledger
-		"logs.collected_only",           // a repo collected but never enqueued
-		"queue.present",                 // a populated upload_queue
-		"queue.metadata_bucket",         // a manifest naming the bucket
-		"queue.codebase_archive",        // staged tar.gz archives
-		"deepscan.binary_marker",        // the bucket name inside the binary
-		"version.confirmed_affected",    // 0.2.93
-		"config.not_mitigated",          // neither mitigation set
-		"config.auth_present",           // auth.json exists (and was not read)
-		"secrets.deleted_from_checkout", // THE headline finding
-		"secrets.in_head",               //
-	} {
-		if !has(rep, want) {
-			t.Errorf("finding %q is missing -- a detector stopped contributing", want)
+	t.Run("verdict and findings", func(t *testing.T) {
+		if rep.Verdict != model.VerdictCompromised {
+			t.Fatalf("verdict = %s, want COMPROMISED\nfindings: %s", rep.Verdict, ids(rep))
 		}
-	}
-
-	// The rotation-boundary case: the start event is in unified.jsonl.1 and its
-	// enqueues are in unified.jsonl. A per-file correlator reports this repo as
-	// COLLECTED-ONLY and understates the worst finding the tool can make.
-	pay := repoBySuffix(rep, "payments-api")
-	if pay == nil {
-		t.Fatal("payments-api is missing from the ledger")
-	}
-	if pay.Status != model.StatusQueued {
-		t.Errorf("payments-api status = %q, want queued -- the enqueue in the rotated sibling file was not correlated",
-			pay.Status)
-	}
-	if len(pay.Archives) != 2 {
-		t.Errorf("payments-api archives = %d, want 2 (before + after)", len(pay.Archives))
-	}
-
-	// The gzipped rotation must be read too.
-	if infra := repoBySuffix(rep, "infra"); infra == nil || infra.Status != model.StatusQueued {
-		t.Errorf("the repo recorded only in the gzipped rotated log was not picked up: %+v", infra)
-	}
-
-	// The headline: secrets that are GONE from the checkout but were in the uploaded
-	// object set. The user cannot find these by looking at their own repo.
-	deleted := map[string]bool{}
-	for _, h := range pay.SecretFiles {
-		if h.DeletedFromCheckout {
-			deleted[h.Path] = true
+		if got := rep.Verdict.ExitCode(); got != 4 {
+			t.Errorf("exit code = %d, want 4", got)
 		}
-	}
-	for _, want := range []string{".env.production", "certs/prod.pem"} {
-		if !deleted[want] {
-			t.Errorf("%s was not flagged as deleted-from-checkout; that is the whole point of the tool", want)
-		}
-	}
-	if len(pay.SecretFiles) == 0 || !pay.SecretsScanned {
-		t.Error("payments-api was never secret-scanned")
-	}
-}
 
-// The auth token must never appear anywhere in the report -- not in a finding, not
-// in evidence, not in an error message. grokpatrol notes that auth.json exists and
-// never opens it.
-func TestAuthTokenNeverLeaks(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
-	}
-	home := buildFakeHome(t)
-	rep := scanHome(t, home)
-
-	blob := fmt.Sprintf("%+v", *rep)
-	for _, forbidden := range []string{
-		"xai-SECRET-TOKEN", // the token in the fixture's auth.json
-		"hunter2",          // the password inside the fixture's .env.production
-	} {
-		if strings.Contains(blob, forbidden) {
-			t.Errorf("the report contains %q -- grokpatrol must report secret LOCATIONS, never secret VALUES", forbidden)
+		// Every detector must have fired. If one silently stops contributing, the verdict
+		// can still come out right for the wrong reason -- so each is asserted by name.
+		for _, want := range []string{
+			"logs.archive_enqueued",         // proof of upload, from the log ledger
+			"logs.collected_only",           // a repo collected but never enqueued
+			"queue.present",                 // a populated upload_queue
+			"queue.metadata_bucket",         // a manifest naming the bucket
+			"queue.codebase_archive",        // staged tar.gz archives
+			"deepscan.binary_marker",        // the bucket name inside the binary
+			"version.confirmed_affected",    // 0.2.93
+			"config.not_mitigated",          // neither mitigation set
+			"config.auth_present",           // auth.json exists (and was not read)
+			"secrets.deleted_from_checkout", // THE headline finding
+			"secrets.in_head",               //
+		} {
+			if !has(rep, want) {
+				t.Errorf("finding %q is missing -- a detector stopped contributing", want)
+			}
 		}
-	}
+
+		// The rotation-boundary case: the start event is in unified.jsonl.1 and its
+		// enqueues are in unified.jsonl. A per-file correlator reports this repo as
+		// COLLECTED-ONLY and understates the worst finding the tool can make.
+		pay := repoBySuffix(rep, "payments-api")
+		if pay == nil {
+			t.Fatal("payments-api is missing from the ledger")
+		}
+		if pay.Status != model.StatusQueued {
+			t.Errorf("payments-api status = %q, want queued -- the enqueue in the rotated sibling file was not correlated",
+				pay.Status)
+		}
+		if len(pay.Archives) != 2 {
+			t.Errorf("payments-api archives = %d, want 2 (before + after)", len(pay.Archives))
+		}
+
+		// The gzipped rotation must be read too.
+		if infra := repoBySuffix(rep, "infra"); infra == nil || infra.Status != model.StatusQueued {
+			t.Errorf("the repo recorded only in the gzipped rotated log was not picked up: %+v", infra)
+		}
+
+		// The headline: secrets that are GONE from the checkout but were in the uploaded
+		// object set. The user cannot find these by looking at their own repo.
+		deleted := map[string]bool{}
+		for _, h := range pay.SecretFiles {
+			if h.DeletedFromCheckout {
+				deleted[h.Path] = true
+			}
+		}
+		for _, want := range []string{".env.production", "certs/prod.pem"} {
+			if !deleted[want] {
+				t.Errorf("%s was not flagged as deleted-from-checkout; that is the whole point of the tool", want)
+			}
+		}
+		if len(pay.SecretFiles) == 0 || !pay.SecretsScanned {
+			t.Error("payments-api was never secret-scanned")
+		}
+	})
+
+	// The auth token must never appear anywhere in the report -- not in a finding,
+	// not in evidence, not in an error message. grokpatrol notes that auth.json
+	// exists and never opens it.
+	t.Run("auth token never leaks", func(t *testing.T) {
+		blob := fmt.Sprintf("%+v", *rep)
+		for _, forbidden := range []string{
+			"xai-SECRET-TOKEN", // the token in the fixture's auth.json
+			"hunter2",          // the password inside the fixture's .env.production
+		} {
+			if strings.Contains(blob, forbidden) {
+				t.Errorf("the report contains %q -- grokpatrol must report secret LOCATIONS, never secret VALUES", forbidden)
+			}
+		}
+	})
 }
 
 // A host with no Grok on it must not be reported as EXPOSED. This is the
@@ -240,6 +243,19 @@ func buildFakeHome(t *testing.T) string {
 
 func ev(format string, args ...any) string { return fmt.Sprintf(format, args...) }
 
+// filterEnv drops any entries for the given keys, so a caller can override them
+// exactly once without relying on how a child process resolves duplicate keys.
+func filterEnv(env []string, dropKeys ...string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(dropKeys, key) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 func lines(s ...string) string { return strings.Join(s, "\n") + "\n" }
 
 func mkdirs(t *testing.T, paths ...string) {
@@ -300,7 +316,16 @@ func writeFakeBinary(t *testing.T, path, marker string) {
 func gitRepo(t *testing.T, dir string, build func(git func(...string), write func(string, string))) {
 	t.Helper()
 	mkdirs(t, dir)
-	env := append(os.Environ(),
+	// HOME points at a fresh, empty directory and GIT_CONFIG_NOSYSTEM skips
+	// /etc/gitconfig: the fixture must not inherit whatever gpgsign, credential
+	// helper, or hooks configuration happens to be ambient on the machine running
+	// the test -- any of those can silently turn a local `git commit` into a slow
+	// or blocking operation. GIT_TERMINAL_PROMPT=0 means a stray prompt fails
+	// fast instead of hanging.
+	env := append(filterEnv(os.Environ(), "HOME"),
+		"HOME="+t.TempDir(),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
 		"GIT_AUTHOR_DATE=2026-06-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-06-01T00:00:00Z",
