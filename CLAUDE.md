@@ -16,7 +16,7 @@ make build     # ./dist/grokpatrol
 make check     # what CI runs: verify-deps + gofmt + vet + race tests + cross-compile smoke
 make test      # go test -race ./...
 make demo      # build a synthetic compromised host and scan it (expect exit 4)
-make release   # six platforms + SHA256SUMS (runs verify-deps first)
+make release   # four platforms + SHA256SUMS (runs verify-deps first)
 make fuzz      # fuzz the log parser for 60s
 make bench     # marker-scanner throughput
 ```
