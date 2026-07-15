@@ -29,3 +29,17 @@ jobs:
           cache: false
 
       - run: make check
+
+      # TEMPORARY DIAGNOSTIC — not for merge. Measures whether internal/engine's
+      # test time is dominated by deepscan walking /opt and /usr/bin (unconfined
+      # by test ScanRoots) vs. git subprocess overhead. Remove before merging.
+      - name: diagnostic - per-test timing and system dir sizes
+        if: always()
+        run: |
+          echo "--- /opt and /usr/bin size on this runner ---"
+          du -sh /opt /usr/bin 2>/dev/null || true
+          echo "--- file counts ---"
+          find /opt -type f 2>/dev/null | wc -l
+          find /usr/bin -type f 2>/dev/null | wc -l
+          echo "--- per-test timing for internal/engine (race) ---"
+          go test -race -v ./internal/engine/... 2>&1 | grep -E '^(--- (PASS|FAIL)|=== RUN|ok|FAIL)'
