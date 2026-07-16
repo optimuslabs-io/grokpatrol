@@ -1,7 +1,23 @@
 # grokpatrol
 
+[![CI](https://github.com/optimuslabs-io/grokpatrol/actions/workflows/ci.yml/badge.svg)](https://github.com/optimuslabs-io/grokpatrol/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/optimuslabs-io/grokpatrol?sort=semver)](https://github.com/optimuslabs-io/grokpatrol/releases/latest)
+[![License](https://img.shields.io/github/license/optimuslabs-io/grokpatrol)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/optimuslabs-io/grokpatrol)](go.mod)
+![Dependencies: zero](https://img.shields.io/badge/dependencies-0-brightgreen)
+![Provenance: sigstore](https://img.shields.io/badge/provenance-sigstore-blue)
+
 Detects, on your machine, whether the **Grok Build CLI** collected and queued your
 git repositories for upload to xAI — and tells you **which secrets went with them**.
+
+<!-- Demo GIF goes here. Generate with `vhs demo.tape` (charmbracelet/vhs) in a throwaway
+     VM or container -- `make demo` writes live indicator strings that can trip corporate EDR --
+     then commit docs/demo.gif and uncomment the line below.
+![grokpatrol scanning a compromised host](docs/demo.gif)
+-->
+
+> **Live incident.** The Grok Build CLI was found silently uploading whole git repositories to
+> xAI. If you have run it, the question is not whether it *could* — it's what left your disk.
 
 The Grok Build CLI was found to silently upload entire git repositories to the Google Cloud Storage. The upload was performed by a background collector that ran **outside the tool-call permission system**, so it fired even in sessions where the model was denied file access. What it shipped:
 
@@ -11,7 +27,7 @@ The Grok Build CLI was found to silently upload entire git repositories to the G
   exactly where secrets tend to hide.
 
 Confirmed affected: `0.2.93`. Reported still present in versions through at least `0.2.99`.
-The tool is version `0.1.0` and can detect versions `0.1.212` through the latest observed.
+grokpatrol detects Grok versions `0.1.212` through the latest observed.
 
 Most published indicators were network-based — you had to be watching the wire while it
 happened. `grokpatrol` answers the question you can still ask afterwards: **what evidence

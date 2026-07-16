@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in grokpatrol crashed, errored, or behaved wrong (not a detection miss — use the other template for that).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If this is a **security issue** (a write to disk, network egress,
+        a secret value being read/printed, or the `grok` binary being executed), stop and follow
+        [SECURITY.md](https://github.com/optimuslabs-io/grokpatrol/blob/main/SECURITY.md) instead —
+        do not file it here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `grokpatrol --version`.
+      placeholder: grokpatrol v0.1.12 (...)
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (arm64)
+        - macOS (amd64)
+        - Linux (amd64)
+        - Linux (arm64)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: How did you install it?
+      placeholder: go install / install.sh / release binary / built from source
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you run, and what went wrong? Paste the command and any error.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: |
+        Paste `grokpatrol --json` if you can — it is the complete record and is safe to share:
+        it contains file **paths and object ids only**, never secret values. Redact paths you
+        consider sensitive.
+      render: shell
+    validations:
+      required: false

@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a capability or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep grokpatrol's hard constraints in mind — no network, no third-party
+        dependencies, read-only, never executes `grok`, never reads secret values. A request that
+        needs one of those bent is a design discussion; say so and we'll talk it through.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The incident-response or forensic situation you're in, not the solution yet.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Does this fit the invariants?
+      options:
+        - label: It needs no network access and no third-party dependency.
+        - label: It stays read-only (no writes to the scanned host).
+        - label: It does not read or print secret values, and does not execute the `grok` binary.
