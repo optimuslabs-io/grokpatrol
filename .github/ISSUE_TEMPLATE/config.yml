@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Security vulnerability (private)
+    url: https://github.com/optimuslabs-io/grokpatrol/security/advisories/new
+    about: Report a security issue privately. Do NOT open a public issue — see SECURITY.md.
+  - name: 💬 Questions & "am I affected?" discussion
+    url: https://github.com/optimuslabs-io/grokpatrol/discussions
+    about: Usage questions, triage help, and general discussion.

@@ -1,7 +1,12 @@
-# Every merge to main is a release: this workflow reads the latest vX.Y.Z tag,
+# Every code merge to main is a release: this workflow reads the latest vX.Y.Z tag,
 # bumps the patch number, and -- only if `make check` passes on the new commit --
 # tags, builds, and publishes it. Nobody picks a version number by hand; a commit
-# that fails check never consumes one. A deliberate major/minor bump still works
+# that fails check never consumes one.
+#
+# Docs-only merges do NOT cut a release (see paths-ignore below): a README or LICENSE
+# fix should not mint a new signed binary and burn a version number on a build whose
+# bytes are identical to the last one. A change that touches any code, the Makefile,
+# or a workflow still releases. A deliberate major/minor bump still works
 # the old way: push an exact `vX.Y.Z` tag yourself, and the next auto-release
 # picks up from there since the "latest tag" lookup is a real version sort, not a
 # counter this workflow owns.
@@ -28,6 +33,16 @@ name: release
 on:
   push:
     branches: [main]
+    # Docs/metadata-only merges do not release. paths-ignore skips the run only when
+    # EVERY changed file matches; a commit that also touches code still releases.
+    paths-ignore:
+      - '**.md'
+      - 'llms.txt'
+      - 'LICENSE'
+      - 'NOTICE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.gitignore'
+      - 'demo.tape'
 
 permissions:
   contents: read

@@ -1,0 +1,49 @@
+name: False positive / false negative (detection accuracy)
+description: grokpatrol flagged something it shouldn't have, or missed something it should have caught.
+labels: ["detection"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Detection accuracy is the product — these reports are genuinely valued. Please share what
+        you safely can. **Never paste secret values.** grokpatrol reports locations, and so should
+        this issue: paths, object ids, log lines, and verdicts are enough.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which is it?
+      options:
+        - False positive (flagged something that is not a real indicator)
+        - False negative (missed a real indicator that was present)
+        - Wrong verdict (finding is right, but COMPROMISED/EXPOSED/INDETERMINATE/CLEAN is off)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: grokpatrol v0.1.12
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What grokpatrol reported
+      description: The verdict and the relevant finding/section. `--json` (`| jq`) is ideal — it is location-only.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the correct result would be, and why
+      description: What did you expect it to say, and how do you know? (e.g. "this file only mentions the bucket in a comment," "the queue held a real archive it didn't count.")
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context that would help reproduce
+      description: Grok version on the host, whether logs were rotated/gzipped, config.toml state, unusual filesystem layout, etc. No secret values.
+    validations:
+      required: false
