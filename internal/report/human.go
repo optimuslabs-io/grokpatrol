@@ -5,7 +5,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/optimuslabs-io/grokpatrol/internal/detect/config"
@@ -146,11 +145,11 @@ func otherFindings(w io.Writer, rep *model.Report, s Style) {
 		}
 
 		shown, omitted := s.capRows(f.Evidence)
-		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		var rows [][]string
 		for _, e := range shown {
-			fmt.Fprintf(tw, "    %s\t%s\t%s\n", evidenceWhere(e), e.Locator, s.c(dim, e.Note))
+			rows = append(rows, []string{evidenceWhere(e), e.Locator, s.c(dim, e.Note)})
 		}
-		tw.Flush()
+		writeTable(w, "    ", rows)
 		if omitted > 0 {
 			fmt.Fprintf(w, "    %s\n", s.c(dim, fmt.Sprintf("... and %d more (full list in --json)", omitted)))
 		}
@@ -290,11 +289,11 @@ func staging(w io.Writer, rep *model.Report, s Style) {
 		if len(b.rows) == 0 {
 			continue
 		}
-		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-		for _, r := range b.rows {
-			fmt.Fprintf(tw, "    %s\t%s\n", r[0], r[1])
+		rows := make([][]string, len(b.rows))
+		for i, r := range b.rows {
+			rows[i] = []string{r[0], r[1]}
 		}
-		tw.Flush()
+		writeTable(w, "    ", rows)
 	}
 	fmt.Fprintln(w)
 }
@@ -774,11 +773,11 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 		return
 	}
 	fmt.Fprintln(w, s.c(bold, "INSTALLATION"))
-	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	for _, l := range lines {
-		fmt.Fprintf(tw, "  %s\t%s\n", l[0], l[1])
+	rows := make([][]string, len(lines))
+	for i, l := range lines {
+		rows[i] = []string{l[0], l[1]}
 	}
-	tw.Flush()
+	writeTable(w, "  ", rows)
 	// A summary that drops detail has to say it did, or it reads as the whole
 	// inventory -- and on an EXPOSED host with no exfil sections below, this may be
 	// the only place the default report names --verbose at all.
@@ -874,11 +873,11 @@ func mitigations(w io.Writer, rep *model.Report, s Style) {
 		return
 	}
 	fmt.Fprintln(w, s.c(bold, "MITIGATIONS"))
-	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	var rows [][]string
 	for _, m := range config.Mitigations() {
-		fmt.Fprintf(tw, "  [%s]\t%s = %s\n", m.Table, m.Key, m.Want)
+		rows = append(rows, []string{"[" + m.Table + "]", fmt.Sprintf("%s = %s", m.Key, m.Want)})
 	}
-	tw.Flush()
+	writeTable(w, "  ", rows)
 	fmt.Fprintln(w)
 }
 
@@ -969,21 +968,21 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 			rows = rows[:maxLedgerRepos]
 		}
 
-		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-		fmt.Fprintf(tw, "  %s\t%s", s.c(dim, "REPOSITORY"), s.c(dim, "STATUS"))
+		header := []string{s.c(dim, "REPOSITORY"), s.c(dim, "STATUS")}
 		// ATTEMPTS is verbose-only: how many archives went OUT is what to act on, and
 		// the collect-attempt count is a second-order detail beside it.
 		if s.Verbose {
-			fmt.Fprintf(tw, "\t%s", s.c(dim, "ATTEMPTS"))
+			header = append(header, s.c(dim, "ATTEMPTS"))
 		}
-		fmt.Fprintf(tw, "\t%s", s.c(dim, "ARCHIVES"))
+		header = append(header, s.c(dim, "ARCHIVES"))
 		if showAuth {
-			fmt.Fprintf(tw, "\t%s", s.c(dim, "UPLOAD 401s"))
+			header = append(header, s.c(dim, "UPLOAD 401s"))
 		}
-		fmt.Fprintf(tw, "\t%s\n", s.c(dim, "COLLECTED"))
+		header = append(header, s.c(dim, "COLLECTED"))
+		table := [][]string{header}
 
 		for _, r := range rows {
-			status := r.Status
+			var status string
 			switch r.Status {
 			case model.StatusDelivered:
 				status = s.c(red+bold, "DELIVERED")
@@ -994,21 +993,29 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 			default:
 				status = s.c(dim, strings.ToUpper(r.Status))
 			}
-			fmt.Fprintf(tw, "  %s\t%s", r.RepoPath, status)
+			// The DEFAULT report mid-truncates a long repo path so the coloured STATUS and
+			// the ARCHIVES cell beside it still fit an ~80-column terminal; --verbose and
+			// --json keep the full path.
+			repoPath := r.RepoPath
+			if !s.Verbose {
+				repoPath = truncatePath(repoPath, maxPathCol)
+			}
+			row := []string{repoPath, status}
 			if s.Verbose {
-				fmt.Fprintf(tw, "\t%d", r.CollectAttempts)
+				row = append(row, fmt.Sprintf("%d", r.CollectAttempts))
 			}
 			// The archive count carries BOTH total and unique now -- the gap between
 			// them separates sustained collection from a retried failing upload -- so
 			// the separate "ARCHIVES QUEUED FOR UPLOAD" counts block is gone from the
 			// default report; --verbose still lists every gs:// object below.
-			fmt.Fprintf(tw, "\t%s", archiveSummary(r, s))
+			row = append(row, archiveSummary(r, s))
 			if showAuth {
-				fmt.Fprintf(tw, "\t%s", authSummary(r, s))
+				row = append(row, authSummary(r, s))
 			}
-			fmt.Fprintf(tw, "\t%s\n", collectedWindow(r))
+			row = append(row, collectedWindow(r))
+			table = append(table, row)
 		}
-		tw.Flush()
+		writeTable(w, "  ", table)
 		if omitted > 0 {
 			noun := "repositories"
 			if omitted == 1 {
@@ -1269,11 +1276,11 @@ func citations(w io.Writer, rep *model.Report, s Style) {
 		return
 	}
 	fmt.Fprintln(w)
-	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	for _, r := range rows {
-		fmt.Fprintf(tw, "  %s\t%s\n", r[0], s.c(dim, r[1]))
+	table := make([][]string, len(rows))
+	for i, r := range rows {
+		table[i] = []string{r[0], s.c(dim, r[1])}
 	}
-	tw.Flush()
+	writeTable(w, "  ", table)
 }
 
 // secrets is the section that gets acted on, so it prints full paths. Only the
@@ -1305,7 +1312,7 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		// Per-repo counts first -- this loop carries the headline number the reader acts
 		// on: how many secrets, and how many are gone from the checkout but still in the
 		// uploaded history (the ones they cannot find by looking at their own repo).
-		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		var countRows [][]string
 		for _, r := range rep.Repos {
 			if len(r.SecretFiles) == 0 {
 				continue
@@ -1320,9 +1327,9 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 			if deleted > 0 {
 				count += ", " + s.c(red+bold, fmt.Sprintf("%d deleted from the checkout but still in history", deleted))
 			}
-			fmt.Fprintf(tw, "  %s\t%s\n", s.c(cyan, r.RepoPath), count)
+			countRows = append(countRows, []string{s.c(cyan, r.RepoPath), count})
 		}
-		tw.Flush()
+		writeTable(w, "  ", countRows)
 
 		// Numbers + a few EXAMPLES: the default report now names WHICH files to rotate
 		// -- deleted-from-checkout first, diversified by risk class -- without becoming
@@ -1330,12 +1337,12 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		// blob id stays a --verbose receipt.
 		if shown, omitted := secretExamples(rep); len(shown) > 0 {
 			fmt.Fprintf(w, "\n  %s\n", s.c(dim, "examples:"))
-			etw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+			var exRows [][]string
 			for _, h := range shown {
 				name, class, risk := secretExampleRow(h, s)
-				fmt.Fprintf(etw, "    %s\t%s\t%s\n", name, class, risk)
+				exRows = append(exRows, []string{name, class, risk})
 			}
-			etw.Flush()
+			writeTable(w, "    ", exRows)
 			if omitted > 0 {
 				fmt.Fprintf(w, "    %s\n", s.c(dim, fmt.Sprintf("... and %d more (--verbose)", omitted)))
 			}
@@ -1363,7 +1370,7 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		}
 		fmt.Fprintf(w, "  %s%s\n", s.c(cyan, r.RepoPath), s.c(dim, uploadedSetSize(r)))
 
-		tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		var secRows [][]string
 		for _, h := range r.SecretFiles {
 			note := "in HEAD"
 			if h.DeletedFromCheckout {
@@ -1372,9 +1379,9 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 			// The blob id rides in a column rather than on a line of its own: one row per
 			// secret keeps the rotation list scannable, and this list is read under
 			// pressure by someone deciding what to revoke first.
-			fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\n", h.Path, s.c(dim, h.Class), note, s.c(dim, blobCol(h)))
+			secRows = append(secRows, []string{h.Path, s.c(dim, h.Class), note, s.c(dim, blobCol(h))})
 		}
-		tw.Flush()
+		writeTable(w, "    ", secRows)
 	}
 
 	// The invitation, printed once. grokpatrol is telling the user how to read files

@@ -109,6 +109,33 @@ func TestLedgerTableIsCappedInDefault(t *testing.T) {
 	}
 }
 
+// A long repository path is mid-truncated in the DEFAULT ledger so the coloured
+// STATUS and ARCHIVES cells beside it still fit an ~80-column terminal, but the full
+// path survives under --verbose (the receipt) -- this locks in the truncatePath wiring.
+func TestLedgerTruncatesLongRepoPathInDefaultOnly(t *testing.T) {
+	long := "~/work/very/deeply/nested/monorepo/services/payments-api"
+	rep := &model.Report{
+		Verdict: model.VerdictExposed,
+		Repos: []model.RepoStatus{{
+			RepoPath: long,
+			Status:   model.StatusQueued,
+			Archives: []model.Archive{{GCSPath: "gs://b/x.tar.gz"}},
+		}},
+	}
+
+	def := renderStyle(rep, Style{})
+	if strings.Contains(def, long) {
+		t.Errorf("default ledger printed the full long repo path; it should be mid-truncated:\n%s", def)
+	}
+	if !strings.Contains(def, "…") {
+		t.Error("default ledger did not mid-truncate the long repo path (no ellipsis)")
+	}
+
+	if verb := renderStyle(rep, Style{Verbose: true}); !strings.Contains(verb, long) {
+		t.Errorf("--verbose must keep the full repo path, got:\n%s", verb)
+	}
+}
+
 // Change C: the default report carries the archive counts in the ledger table's
 // ARCHIVES cell, so the separate "ARCHIVES QUEUED FOR UPLOAD" block is gone by
 // default and present under --verbose (where it lists every gs:// object).
