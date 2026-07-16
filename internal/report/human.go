@@ -725,6 +725,21 @@ func dedupeBinaries(ev []model.Evidence) []model.Evidence {
 	return out
 }
 
+// primaryBinary picks the default-report install: the $PATH binary when one exists,
+// otherwise the first entry (already PATH-sorted by dedupeBinaries). extra is how many
+// other binaries were collapsed behind --verbose.
+func primaryBinary(bins []model.Evidence) (primary *model.Evidence, extra int) {
+	if len(bins) == 0 {
+		return nil, 0
+	}
+	for i := range bins {
+		if bins[i].PathEntry != "" {
+			return &bins[i], len(bins) - 1
+		}
+	}
+	return &bins[0], len(bins) - 1
+}
+
 // binLabel is the INSTALLATION left column. The install on $PATH is called out so a
 // reader scanning a host with several copies on disk sees which one actually runs.
 func binLabel(e model.Evidence, s Style) string {
@@ -773,26 +788,37 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 			// marker offset, so a binary carrying the bucket name at three offsets used to
 			// print as three identical "grok binary" rows. dedupeBinaries collapses them to
 			// one representative per path and floats the install on $PATH to the top.
-			for _, b := range dedupeBinaries(f.Evidence) {
-				label := binLabel(b, s)
-				if !s.Verbose {
-					// The path, size, and -- for the install that actually runs -- the $PATH
-					// highlight are what locate and identify the live install: a summary-level
-					// fact, printed in BOTH modes. The marker offset and sha256 are for someone
-					// diffing this build against a vendor's published hashes, a receipt task,
-					// so they wait for --verbose.
-					desc := fmt.Sprintf("%s (%s)", b.Path, humanBytes(b.SizeBytes))
-					if b.PathEntry != "" {
-						desc += "  " + s.c(red+bold, "<- runs when you type `grok`")
-						if b.PathEntry != b.Path {
-							desc += fmt.Sprintf("\n%s on your $PATH at %s (symlink to the file above)", pad, b.PathEntry)
-						}
-					}
-					lines = append(lines, [2]string{label, desc})
-					withheld = withheld || b.SHA256 != ""
-					continue
+			bins := dedupeBinaries(f.Evidence)
+			if s.Verbose {
+				for _, b := range bins {
+					lines = append(lines, [2]string{binLabel(b, s), binDesc(b, s)})
 				}
-				lines = append(lines, [2]string{label, binDesc(b, s)})
+				continue
+			}
+			// Default: the live install only. Extra downloads in ~/.grok/downloads (or
+			// copies elsewhere) are inventory -- same triage noise as a second config.toml
+			// row -- so they collapse to one pointer. If nothing is on $PATH, keep the
+			// first discovered binary so the section still locates an install.
+			primary, extra := primaryBinary(bins)
+			if primary != nil {
+				desc := fmt.Sprintf("%s (%s)", primary.Path, humanBytes(primary.SizeBytes))
+				if primary.PathEntry != "" {
+					desc += "  " + s.c(red+bold, "<- runs when you type `grok`")
+					if primary.PathEntry != primary.Path {
+						desc += fmt.Sprintf("\n%s on your $PATH at %s (symlink to the file above)", pad, primary.PathEntry)
+					}
+				}
+				lines = append(lines, [2]string{binLabel(*primary, s), desc})
+				withheld = withheld || primary.SHA256 != ""
+			}
+			for _, b := range bins {
+				withheld = withheld || b.SHA256 != ""
+			}
+			if extra > 0 {
+				lines = append(lines, [2]string{
+					s.c(dim, "also on disk"),
+					s.c(dim, engine.Plural(extra, "other grok binary")+" (--verbose)"),
+				})
 			}
 		}
 	}
