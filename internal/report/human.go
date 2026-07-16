@@ -57,16 +57,19 @@ func (s Style) c(code, text string) string {
 	return code + text + reset
 }
 
-// Human writes the report a person actually reads. The ordering is deliberate:
-// the verdict, then what was taken, then what to rotate, then what we could not
-// see, then what to do. Anything that would bury the rotation list goes below it.
+// Human writes the report a person actually reads. Ordering is deliberate:
+// VERDICT + facts, GROK BUILD, ACTION (rotate + mitigate), then evidence
+// sections, then the tool-identity footer at the absolute bottom -- provenance,
+// not the lead. --quiet still prints VERDICT then the footer.
 func Human(w io.Writer, rep *model.Report, s Style) {
 	verdictBanner(w, rep, s)
 	if s.Quiet {
+		footer(w, rep, s)
 		return
 	}
 
 	versionBanner(w, rep, s)
+	actionBanner(w, rep, s)
 	installation(w, rep, s)
 	mitigations(w, rep, s)
 	ledger(w, rep, s)
@@ -283,7 +286,7 @@ func staging(w io.Writer, rep *model.Report, s Style) {
 	if s.Verbose {
 		stagingNote = "   (recorded by name and hash, never opened)"
 	}
-	fmt.Fprintln(w, s.c(bold, "STAGING")+s.c(dim, stagingNote))
+	fmt.Fprintln(w, s.c(bold, "UPLOAD QUEUE")+s.c(dim, stagingNote))
 	for _, b := range blocks {
 		fmt.Fprintf(w, "  %s\n", b.title)
 		if len(b.rows) == 0 {
@@ -299,31 +302,35 @@ func staging(w io.Writer, rep *model.Report, s Style) {
 }
 
 func verdictBanner(w io.Writer, rep *model.Report, s Style) {
-	var color, headline string
+	var color string
+	var lines []string
 	switch rep.Verdict {
 	case model.VerdictCompromised:
 		color = red
-		// COMPROMISED means a delivery is proven. Only the delivered branch of
-		// exfilHeadline may render here: its queued/collected branches say "delivery
-		// UNCONFIRMED", which is a direct contradiction under this verdict -- and that
-		// case is reachable, because a schema-drift upload signal (TagUpload) can promote
-		// a host whose repos were merely queued or collected. When no repo was confirmed
-		// delivered, the signal is a changed log schema, so say exactly that.
+		// COMPROMISED means exfiltration is proven. Only the confirmed branch of
+		// exfilFacts may render here: its queued/collected branches say unconfirmed,
+		// which is a direct contradiction under this verdict -- and that case is
+		// reachable, because a schema-drift upload signal (TagUpload) can promote a
+		// host whose repos were merely queued or collected. When no repo was confirmed
+		// exfiltrated, the signal is a changed log schema, so say exactly that.
 		if hasDelivered(rep) {
-			headline = exfilHeadline(rep)
+			lines = exfilFacts(rep)
 		} else {
-			headline = "An upload event was found in Grok's logs, but the log schema has changed and no\n" +
-				"confirmed delivery could be attributed to a repository. Treat this as evidence of\n" +
-				"upload and rotate every repository this machine touched."
+			lines = []string{
+				"Exfiltrated  evidence in logs, but the log schema has changed",
+				"             and no completion could be attributed to a repository.",
+				"             Treat every repository this machine touched as disclosed.",
+			}
 		}
 	case model.VerdictExposed:
 		color = yellow
-		// A collected-or-queued host is now EXPOSED (delivery unproven), and its
-		// collection facts are the most actionable line in the report -- lead with them.
+		// A collected-or-queued host is EXPOSED (exfiltration unproven); lead with facts.
 		// Only an install-only host (grok present, nothing collected) gets the generic line.
-		if headline = exfilHeadline(rep); headline == "" {
-			headline = "The Grok Build CLI is present and whole-repository upload is not disabled.\n" +
-				"No evidence was found that it has uploaded anything from this machine yet."
+		if lines = exfilFacts(rep); len(lines) == 0 {
+			lines = []string{
+				"The Grok Build CLI is present and whole-repository upload is not disabled.",
+				"No evidence was found that it has uploaded anything from this machine yet.",
+			}
 		}
 	case model.VerdictIndeterminate:
 		color = yellow
@@ -335,34 +342,32 @@ func verdictBanner(w io.Writer, rep *model.Report, s Style) {
 		// wording would be a false negative -- the one failure this tool is built to
 		// avoid. So the plain "no grok" line is gated on grok actually being absent.
 		if rep.GrokPresent {
-			headline = "No evidence of collection or upload was found, but parts of this machine could\n" +
-				"not be read. This is not a clean bill of health -- see WHAT THIS SCAN COULD NOT\n" +
-				"SEE below."
+			lines = []string{
+				"No evidence of collection or upload was found, but parts of this machine could",
+				"not be read. This is not a clean bill of health -- see BLIND SPOTS below.",
+			}
 		} else {
-			headline = "No Grok Build artifacts were found on this machine, but parts of it could not be\n" +
-				"read -- so this is not a clean bill of health. See WHAT THIS SCAN COULD NOT SEE below."
+			lines = []string{
+				"No Grok Build artifacts were found on this machine, but parts of it could not be",
+				"read -- so this is not a clean bill of health. See BLIND SPOTS below.",
+			}
 		}
 	default:
 		color = green
-		headline = "No Grok Build artifacts were found on this machine."
+		lines = []string{"No Grok Build artifacts were found on this machine."}
 	}
 
 	fmt.Fprintln(w, s.c(color+bold, "VERDICT: "+string(rep.Verdict)))
-	for _, line := range strings.Split(headline, "\n") {
+	for _, line := range lines {
 		fmt.Fprintln(w, "  "+line)
 	}
-	// The scale line, in the nouns the reader acts on rather than severity buckets.
-	// --verbose keeps the severity counts (countsLine); the default leads with what
-	// happened (foundTally), falling back to the severity line on an install-only host
-	// where nothing was collected, queued, or exposed to tally.
-	var scale string
+	// --verbose keeps severity counts; the default folds the noun tally into
+	// exfilFacts as a "Repos" line, so there is only one counting system under
+	// VERDICT at a time -- no separate "Found:" line beneath the banner.
 	if s.Verbose {
-		scale = countsLine(rep)
-	} else if scale = foundTally(rep); scale == "" {
-		scale = countsLine(rep)
-	}
-	if scale != "" {
-		fmt.Fprintf(w, "  %s\n", s.c(dim, scale))
+		if scale := countsLine(rep); scale != "" {
+			fmt.Fprintf(w, "  %s\n", s.c(dim, scale))
+		}
 	}
 	fmt.Fprintln(w)
 }
@@ -388,20 +393,9 @@ func countsLine(rep *model.Report) string {
 	return strings.Join(parts, ", ")
 }
 
-// foundTally is the default report's one-line scale, in the nouns the reader acts on
-// rather than severity buckets. "3 critical, 2 high" tells a security engineer the
-// shape of the finding list; "3 repos implicated · 5 archives queued · 4 secrets
-// exposed" tells the person whose machine it is what happened. The severity counts are
-// not lost -- they move to --verbose (countsLine) and stay complete in --json
-// (rep.Counts). Returns "" for an install-only host with nothing collected, queued, or
-// exposed, so the caller falls back to the severity line rather than printing an empty
-// "Found:".
-//
-// "implicated", not "collected": this counts EVERY repo the ledger touched -- queued
-// and collected-only alike -- whereas the verdict headline says "N repository collected
-// and queued" about the queued set only. Reusing "collected" for the wider set here put
-// two different repo counts ("1 repository collected" vs "2 repos collected") on
-// adjacent lines, reading as a contradiction when both were correct.
+// foundTally is retained for tests and --json-adjacent callers that want the noun
+// scale in one string. The default banner folds the same numbers into exfilFacts as
+// a "Repos" line instead, so there is only one counting system under VERDICT.
 func foundTally(rep *model.Report) string {
 	repos, archives := 0, 0
 	for _, r := range rep.Repos {
@@ -415,18 +409,18 @@ func foundTally(rep *model.Report) string {
 
 	var parts []string
 	if repos > 0 {
-		parts = append(parts, engine.Plural(repos, "repo")+" implicated")
+		parts = append(parts, engine.Plural(repos, "repo")+" touched")
 	}
 	if archives > 0 {
 		parts = append(parts, engine.Plural(archives, "archive")+" queued")
 	}
 	if secretFiles > 0 {
-		parts = append(parts, engine.Plural(secretFiles, "secret")+" exposed")
+		parts = append(parts, engine.Plural(secretFiles, "credential path"))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return "Found: " + strings.Join(parts, " · ")
+	return "Repos  " + strings.Join(parts, " · ")
 }
 
 // secretTotals counts secret files across all repositories, and how many are the
@@ -458,14 +452,10 @@ func hasDelivered(rep *model.Report) bool {
 	return false
 }
 
-// exfilHeadline describes what was collected, queued, or delivered, strongest
-// evidence first. It renders under BOTH verdicts: COMPROMISED (a confirmed
-// delivery) and EXPOSED (collection or queueing with no proof of delivery). On
-// either, the collection facts are the most actionable thing in the report, so the
-// banner must lead with them rather than bury them under a generic line. Returns ""
-// when no repository was implicated, leaving the caller to supply a
-// verdict-appropriate fallback.
-func exfilHeadline(rep *model.Report) string {
+// exfilFacts returns labeled telegraph lines for the banner: Queued / Collected /
+// Exfiltrated / Repos. Victim-centric wording -- never "delivered". Returns nil when
+// no repository was implicated, leaving the caller to supply a verdict fallback.
+func exfilFacts(rep *model.Report) []string {
 	queued, collected, archives := 0, 0, 0
 	delivered, confirmed := 0, 0
 	for _, r := range rep.Repos {
@@ -482,50 +472,60 @@ func exfilHeadline(rep *model.Report) string {
 			collected++
 		}
 	}
+
+	secretFiles, _ := secretTotals(rep)
+	reposTouched := queued + collected // delivered already counted in queued
+
+	var lines []string
 	switch {
-	// The one case where this tool may state delivery as fact. Everywhere else the
+	// The one case where this tool may state exfiltration as fact. Everywhere else the
 	// banner is careful to say the log cannot speak to it; here the log did.
 	case delivered > 0:
-		return fmt.Sprintf(
-			"%s CONFIRMED DELIVERED to %s (%s collected, %s built and queued).\n"+
-				"This is not an inference: Grok's log records the transfer completing.\n"+
-				"Their full git history -- including files you deleted -- is in xAI's possession. Rotate now.",
-			engine.Plural(confirmed, "archive"), scan.BucketURL(),
-			engine.Plural(queued, "repository"), engine.Plural(archives, "archive"))
+		lines = append(lines,
+			fmt.Sprintf("Exfiltrated  CONFIRMED -- %s to %s",
+				engine.Plural(confirmed, "archive"), scan.BucketURL()),
+			fmt.Sprintf("Queued       %s · %s built",
+				engine.Plural(queued, "repo"), engine.Plural(archives, "archive")),
+		)
 	case queued > 0:
-		// Says what is PROVEN, then what is NOT, and does not blur the two.
-		//
-		// This line used to end "Assume their full git history ... is in xAI's
-		// possession." -- which asserts DELIVERY, the one thing in the whole chain that
-		// cannot be shown from a log. Grok emits no upload-completion event: collection
-		// and enqueue are recorded, the PUT that follows is not. So a delivered archive
-		// and an archive whose upload silently failed leave exactly the same trace, and
-		// a banner that states possession as fact is describing an event this tool never
-		// saw. Overclaiming on the headline is how a report loses the reader who checks
-		// it -- and this report's whole authority is that everything in it is checkable.
-		//
-		// This is an EXPOSED headline, not a COMPROMISED one: collection and queueing
-		// are proven, delivery is not, and the verdict says exactly that. What the
-		// wording must NOT do is soften the collection facts or read as reassurance --
-		// these repositories were read and packaged, and the rotation advice follows
-		// from that alone. COMPROMISED is reserved for a confirmed (or unclassifiable)
-		// delivery; a queued-but-undelivered host is EXPOSED, and must still rotate.
-		return fmt.Sprintf(
-			"%s collected and %s built and queued for upload to %s.\n"+
-				"Delivery is UNCONFIRMED -- Grok logs no upload-completion event -- but it is not\n"+
-				"disproven either: the queue may have drained on a run whose logs have since rotated.\n"+
-				"Treat their full git history -- including files you deleted -- as exposed, and rotate.",
-			engine.Plural(queued, "repository"), engine.Plural(archives, "archive"), scan.BucketURL())
+		// Collection and enqueue are proven; exfiltration completion is not. Grok
+		// logs no upload-completion event, so a successful PUT and a silent failure
+		// leave the same trace. Hedge once, in this slot -- not in an essay.
+		lines = append(lines,
+			fmt.Sprintf("Queued       %s · %s → %s",
+				engine.Plural(queued, "repo"), engine.Plural(archives, "archive"), scan.BucketURL()),
+			"Exfiltrated  unconfirmed (enqueue logged; completion is not)",
+		)
 	case collected > 0:
-		return fmt.Sprintf(
-			"%d repositories were collected by Grok. Whether the upload completed is unconfirmed,\n"+
-				"which is not the same as disproven: the enqueue records may simply have rotated away.", collected)
+		lines = append(lines,
+			fmt.Sprintf("Collected   %s (no enqueue event found)", engine.Plural(collected, "repo")),
+			"Exfiltrated  unconfirmed (enqueue records may have rotated away)",
+		)
 	default:
 		// No repository was implicated by the ledger or the queue. The caller supplies
 		// a fallback appropriate to the verdict (a schema-drift upload signal under
 		// COMPROMISED, an install-only host under EXPOSED).
+		return nil
+	}
+
+	if reposTouched > 0 {
+		repoLine := fmt.Sprintf("Repos        %s touched", engine.Plural(reposTouched, "repo"))
+		if secretFiles > 0 {
+			repoLine += " · " + engine.Plural(secretFiles, "credential path")
+		}
+		lines = append(lines, repoLine)
+	}
+	return lines
+}
+
+// exfilHeadline is the legacy single-string form of exfilFacts, kept for callers and
+// tests that want to join the lines. Prefer exfilFacts for new rendering.
+func exfilHeadline(rep *model.Report) string {
+	lines := exfilFacts(rep)
+	if len(lines) == 0 {
 		return ""
 	}
+	return strings.Join(lines, "\n")
 }
 
 // versionBanner hoists an affected build out of the INSTALLATION table and puts it
@@ -563,17 +563,108 @@ func versionBanner(w io.Writer, rep *model.Report, s Style) {
 
 	switch {
 	case len(confirmed) > 0:
-		fmt.Fprintln(w, s.c(red+bold, "  GROK BUILD "+strings.Join(confirmed, ", ")+"  --  CONFIRMED AFFECTED"))
-		fmt.Fprintf(w, "  %s\n", s.c(red, "This exact build was publicly reproduced collecting whole repositories and"))
-		fmt.Fprintf(w, "  %s\n", s.c(red, "uploading them to xAI. That is not an inference from the version number."))
+		fmt.Fprintln(w, s.c(red+bold, "  GROK BUILD "+strings.Join(confirmed, ", ")+"  ·  confirmed affected"))
+		fmt.Fprintf(w, "  %s\n", s.c(red, "            This exact build was publicly reproduced collecting whole"))
+		fmt.Fprintf(w, "  %s\n", s.c(red, "            repositories and uploading them to xAI."))
 	case len(reported) > 0:
-		fmt.Fprintln(w, s.c(yellow+bold, "  GROK BUILD "+strings.Join(reported, ", ")+"  --  REPORTED AFFECTED"))
-		fmt.Fprintf(w, "  %s\n", s.c(yellow, "This build is within the range reported to carry the collector. grokpatrol has"))
-		fmt.Fprintf(w, "  %s\n", s.c(yellow, "not independently verified that, which is why nothing above the range is called clean."))
+		// Status token only: "in reported-affected range" already carries the
+		// epistemic hedge. The longer gloss (why nothing above the range is
+		// CLEAN) belongs in docs, not every scan.
+		fmt.Fprintln(w, s.c(yellow+bold, "  GROK BUILD "+strings.Join(reported, ", ")+"  ·  in reported-affected range"))
 	default:
 		return
 	}
 	fmt.Fprintln(w)
+}
+
+// actionBanner prints rotate + mitigate under the verdict facts and GROK BUILD.
+// Default stays short: full TOML lives under --verbose and in MITIGATIONS. Omit
+// rotate when nothing was implicated; omit mitigate when config is already fully
+// mitigated. Only renders on EXPOSED/COMPROMISED -- CLEAN/INDETERMINATE must not
+// grow an ACTION block from residual info findings.
+func actionBanner(w io.Writer, rep *model.Report, s Style) {
+	switch rep.Verdict {
+	case model.VerdictExposed, model.VerdictCompromised:
+	default:
+		return
+	}
+
+	rotate := needsRotate(rep)
+	mitigate := needsMitigate(rep)
+	if !rotate && !mitigate {
+		return
+	}
+
+	fmt.Fprintf(w, "  %s\n", s.c(bold, "ACTION"))
+	if rotate {
+		fmt.Fprintf(w, "  %s\n", "  Rotate credentials from full git history of touched repos.")
+	}
+	if mitigate {
+		knobs := mitigateKnobs()
+		if s.Verbose {
+			fmt.Fprintf(w, "  %s\n", "  Mitigate uploads -- set BOTH in ~/.grok/config.toml ("+knobs+"):")
+			for _, line := range mitigateTOMLLines() {
+				fmt.Fprintf(w, "  %s\n", s.c(dim, "    "+line))
+			}
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "  (either alone is not enough)"))
+		} else {
+			fmt.Fprintf(w, "  %s\n", "  Mitigate uploads: set "+knobs+" in ~/.grok/config.toml (both required; see MITIGATIONS).")
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+// needsRotate reports whether any repository was collected, queued, or delivered, or
+// carries a secret hit -- the rotation advice's whole basis.
+func needsRotate(rep *model.Report) bool {
+	for _, r := range rep.Repos {
+		switch r.Status {
+		case model.StatusDelivered, model.StatusQueued, model.StatusCollectedOnly:
+			return true
+		}
+		if len(r.SecretFiles) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// needsMitigate reports whether the config findings leave the host unmitigated. A
+// host with both a mitigated and an unmitigated config finding (two grok homes) still
+// needs the advice: "mitigated" alone must not suppress it.
+func needsMitigate(rep *model.Report) bool {
+	for _, f := range rep.Findings {
+		switch f.ID {
+		case "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable":
+			return true
+		}
+	}
+	return false
+}
+
+// mitigateKnobs renders the two required config.toml settings as one phrase, e.g.
+// "harness.disable_codebase_upload = true and telemetry.trace_upload = false". Sourced
+// from config.Mitigations() rather than duplicated as literals, so this can never drift
+// from what the config detector actually checks.
+func mitigateKnobs() string {
+	var parts []string
+	for _, m := range config.Mitigations() {
+		parts = append(parts, fmt.Sprintf("%s.%s = %s", m.Table, m.Key, m.Want))
+	}
+	return strings.Join(parts, " and ")
+}
+
+// mitigateTOMLLines renders the two required config.toml knobs as TOML, for the
+// --verbose ACTION block.
+func mitigateTOMLLines() []string {
+	var lines []string
+	for i, m := range config.Mitigations() {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, "["+m.Table+"]", fmt.Sprintf("%s = %s", m.Key, m.Want))
+	}
+	return lines
 }
 
 // addUnique appends v if it is not already present, preserving order.
@@ -932,7 +1023,7 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 	if len(rep.Repos) == 0 && delivery == nil {
 		return
 	}
-	fmt.Fprintln(w, s.c(bold, "EXFILTRATION LEDGER"))
+	fmt.Fprintln(w, s.c(bold, "AFFECTED REPOS"))
 	if len(rep.Repos) == 0 {
 		fmt.Fprintf(w, "  %s\n", s.c(dim, "No repository was recorded as collected."))
 	}
@@ -968,7 +1059,7 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 			rows = rows[:maxLedgerRepos]
 		}
 
-		header := []string{s.c(dim, "REPOSITORY"), s.c(dim, "STATUS")}
+		header := []string{s.c(dim, "PATH"), s.c(dim, "STATUS")}
 		// ATTEMPTS is verbose-only: how many archives went OUT is what to act on, and
 		// the collect-attempt count is a second-order detail beside it.
 		if s.Verbose {
@@ -976,20 +1067,20 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 		}
 		header = append(header, s.c(dim, "ARCHIVES"))
 		if showAuth {
-			header = append(header, s.c(dim, "UPLOAD 401s"))
+			header = append(header, s.c(dim, "401s"))
 		}
-		header = append(header, s.c(dim, "COLLECTED"))
+		header = append(header, s.c(dim, "WINDOW"))
 		table := [][]string{header}
 
 		for _, r := range rows {
 			var status string
 			switch r.Status {
 			case model.StatusDelivered:
-				status = s.c(red+bold, "DELIVERED")
+				status = s.c(red+bold, "EXFILTRATED")
 			case model.StatusQueued:
 				status = s.c(red, "QUEUED")
 			case model.StatusCollectedOnly:
-				status = s.c(yellow, "COLLECTED-ONLY")
+				status = s.c(yellow, "COLLECTED")
 			default:
 				status = s.c(dim, strings.ToUpper(r.Status))
 			}
@@ -1039,25 +1130,25 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 	// text under the table, the very confirmation the table above it is reporting --
 	// so a host where delivery WAS proven says so instead.
 	if anyDelivered(rep) {
-		// The verdict headline already states the confirmed delivery in full ("CONFIRMED
-		// DELIVERED ... Grok's log records the transfer completing"), and the STATUS
-		// column reads DELIVERED. Repeating it a third time here is noise in the default
-		// report, so the elaboration is --verbose only.
+		// The verdict headline already states the confirmed exfiltration in full
+		// ("Exfiltrated  CONFIRMED..."), and the STATUS column reads EXFILTRATED.
+		// Repeating it a third time here is noise in the default report, so the
+		// elaboration is --verbose only.
 		if s.Verbose {
-			fmt.Fprintf(w, "\n  %s %s\n", s.c(red+bold, "delivery:"),
+			fmt.Fprintf(w, "\n  %s %s\n", s.c(red+bold, "exfiltration:"),
 				s.c(red, "CONFIRMED -- Grok's log records the transfer completing."))
 			fmt.Fprintf(w, "  %s\n", s.c(dim, "This is the strongest statement this tool can make. It is not inferred from"))
 			fmt.Fprintf(w, "  %s\n", s.c(dim, "collection or queueing: the upload itself was logged as finished."))
 		}
 	} else if delivery != nil {
-		fmt.Fprintf(w, "\n  %s %s\n", s.c(dim, "delivery:"), s.c(dim, delivery.Title))
+		fmt.Fprintf(w, "\n  %s %s\n", s.c(dim, "exfiltration:"), s.c(dim, delivery.Title))
 		// The standing "no upload-completion event" explanation is receipt-grade context,
 		// not a finding to act on -- the ARCHIVES column above is what to act on -- so the
 		// default report keeps just the one-line status and the reasoning waits for
 		// --verbose. A trim, not a retraction: the one-line status still says unconfirmed.
 		if s.Verbose {
 			fmt.Fprintf(w, "  %s\n", s.c(dim, "Grok logs no upload-completion event, so neither this tool nor the log can confirm"))
-			fmt.Fprintf(w, "  %s\n", s.c(dim, "the archives were delivered -- only that they were built and queued."))
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "the archives were exfiltrated -- only that they were built and queued."))
 		}
 	}
 	fmt.Fprintln(w)
@@ -1113,7 +1204,7 @@ func archiveSummary(r model.RepoStatus, s Style) string {
 	}
 	cell := fmt.Sprintf("%d (%d unique)", total, unique)
 	if delivered > 0 {
-		cell += ", " + s.c(red+bold, fmt.Sprintf("%d delivered", delivered))
+		cell += ", " + s.c(red+bold, fmt.Sprintf("%d exfiltrated", delivered))
 	}
 	return cell
 }
@@ -1298,7 +1389,7 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		return
 	}
 
-	fmt.Fprintln(w, s.c(bold, "LIKELY EXPOSED SECRETS")+
+	fmt.Fprintln(w, s.c(bold, "CREDENTIAL PATHS")+
 		s.c(dim, "   (filenames and object ids only -- contents were never read by this tool)"))
 
 	// WITHOUT --verbose this is a COUNT, not the rotation list.
@@ -1309,10 +1400,10 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 	// they cannot find by looking at their own repository. The names, classes and blob
 	// ids are one --verbose away and complete in --json.
 	if !s.Verbose {
-		// Per-repo counts first -- this loop carries the headline number the reader acts
-		// on: how many secrets, and how many are gone from the checkout but still in the
-		// uploaded history (the ones they cannot find by looking at their own repo).
+		// Per-repo counts: PATH / PATHS / DELETED, so the deleted priority class is a
+		// scannable column rather than a prose clause jammed into the count cell.
 		var countRows [][]string
+		countRows = append(countRows, []string{s.c(dim, "PATH"), s.c(dim, "PATHS"), s.c(dim, "DELETED")})
 		for _, r := range rep.Repos {
 			if len(r.SecretFiles) == 0 {
 				continue
@@ -1323,11 +1414,15 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 					deleted++
 				}
 			}
-			count := engine.Plural(len(r.SecretFiles), "secret file")
-			if deleted > 0 {
-				count += ", " + s.c(red+bold, fmt.Sprintf("%d deleted from the checkout but still in history", deleted))
+			path := truncatePath(r.RepoPath, maxPathCol)
+			if s.Color {
+				path = s.c(cyan, path)
 			}
-			countRows = append(countRows, []string{s.c(cyan, r.RepoPath), count})
+			delCell := s.c(dim, "-")
+			if deleted > 0 {
+				delCell = s.c(red+bold, fmt.Sprintf("%d", deleted))
+			}
+			countRows = append(countRows, []string{path, fmt.Sprintf("%d", len(r.SecretFiles)), delCell})
 		}
 		writeTable(w, "  ", countRows)
 
@@ -1336,15 +1431,16 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		// the full rotation list. Filename, class and risk only; never a value, and the
 		// blob id stays a --verbose receipt.
 		if shown, omitted := secretExamples(rep); len(shown) > 0 {
-			fmt.Fprintf(w, "\n  %s\n", s.c(dim, "examples:"))
+			fmt.Fprintln(w)
 			var exRows [][]string
+			exRows = append(exRows, []string{s.c(dim, "PATH"), s.c(dim, "CLASS"), s.c(dim, "RISK")})
 			for _, h := range shown {
 				name, class, risk := secretExampleRow(h, s)
 				exRows = append(exRows, []string{name, class, risk})
 			}
-			writeTable(w, "    ", exRows)
+			writeTable(w, "  ", exRows)
 			if omitted > 0 {
-				fmt.Fprintf(w, "    %s\n", s.c(dim, fmt.Sprintf("... and %d more (--verbose)", omitted)))
+				fmt.Fprintf(w, "  %s\n", s.c(dim, fmt.Sprintf("... and %d more (--verbose)", omitted)))
 			}
 		}
 
@@ -1354,7 +1450,7 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		if total, totalDeleted := secretTotals(rep); total > 0 {
 			fmt.Fprintf(w, "\n  %s\n", s.c(dim,
 				fmt.Sprintf("%s found. --verbose lists them by name, class and blob id; --json has the full record.",
-					engine.Plural(total, "secret file"))))
+					engine.Plural(total, "credential path"))))
 			if totalDeleted > 0 {
 				fmt.Fprintf(w, "  %s\n", s.c(red,
 					fmt.Sprintf("Rotate the %d you cannot see in your own checkout first.", totalDeleted)))
@@ -1371,6 +1467,7 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		fmt.Fprintf(w, "  %s%s\n", s.c(cyan, r.RepoPath), s.c(dim, uploadedSetSize(r)))
 
 		var secRows [][]string
+		secRows = append(secRows, []string{s.c(dim, "PATH"), s.c(dim, "CLASS"), s.c(dim, "RISK"), s.c(dim, "BLOB")})
 		for _, h := range r.SecretFiles {
 			note := "in HEAD"
 			if h.DeletedFromCheckout {
@@ -1544,7 +1641,7 @@ func limitations(w io.Writer, rep *model.Report, s Style) {
 	// first sentence -- enough to NAME the blind spot -- and --verbose gives the full text.
 	// Every caveat still appears; the invariant is that none is dropped, not that each is
 	// spelled out in full.
-	fmt.Fprintln(w, s.c(bold, "WHAT THIS SCAN COULD NOT SEE"))
+	fmt.Fprintln(w, s.c(bold, "BLIND SPOTS"))
 	truncated := false
 	for _, l := range rep.Limitations {
 		text := l

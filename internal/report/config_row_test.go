@@ -109,8 +109,12 @@ func TestConfigRowPointsAtMitigationsSection(t *testing.T) {
 			if !strings.Contains(out, "MITIGATIONS") {
 				t.Errorf("MITIGATIONS section must be printed; got:\n%s", out)
 			}
+			// LastIndex, not Index: an unmitigated host also prints an ACTION banner
+			// above INSTALLATION that names "MITIGATIONS" by name in its own short
+			// pointer ("... both required; see MITIGATIONS)"). That earlier mention is
+			// not the section itself -- the section header is always the LAST occurrence.
 			seeBelowAt := strings.Index(out, "(see below)")
-			sectionAt := strings.Index(out, "MITIGATIONS")
+			sectionAt := strings.LastIndex(out, "MITIGATIONS")
 			if sectionAt < seeBelowAt {
 				t.Errorf("MITIGATIONS section must render AFTER the row pointing at it; got:\n%s", out)
 			}
@@ -128,7 +132,9 @@ func TestMitigationsSectionIsShortAndNamesBothSettings(t *testing.T) {
 	Human(&buf, rep, Style{})
 	out := buf.String()
 
-	start := strings.Index(out, "MITIGATIONS")
+	// LastIndex: an unmitigated host's ACTION banner names "MITIGATIONS" by name
+	// before the section itself ever prints; the section header is the LAST occurrence.
+	start := strings.LastIndex(out, "MITIGATIONS")
 	if start < 0 {
 		t.Fatalf("MITIGATIONS section missing; got:\n%s", out)
 	}

@@ -93,11 +93,20 @@ grokpatrol 0.1.0 scanning /Users/you
     ✓ secrets   3 secret files, 2 DELETED FROM THE CHECKOUT but still in history
 
 VERDICT: EXPOSED
-  2 repositories collected and 3 archives built and queued for upload to gs://grok-code-session-traces/.
+  Queued       2 repos · 3 archives → gs://grok-code-session-traces/
+  Exfiltrated  unconfirmed (enqueue logged; completion is not)
+  Repos        2 repos touched · 3 credential paths
 
-LIKELY EXPOSED SECRETS
-  3 secret files, 2 deleted from the checkout but still in history
-  3 secret files found. --verbose lists them by name and blob id; --json has the full record.
+  ACTION
+    Rotate credentials from full git history of touched repos.
+    Mitigate uploads: set harness.disable_codebase_upload = true and telemetry.trace_upload = false in ~/.grok/config.toml (both required; see MITIGATIONS).
+
+CREDENTIAL PATHS   (filenames and object ids only -- contents were never read by this tool)
+  PATH        PATHS  DELETED
+  ~/work/api  3      2
+
+  3 credential paths found. --verbose lists them by name, class and blob id; --json has the full record.
+  Rotate the 2 you cannot see in your own checkout first.
 ```
 
 A detector that finds nothing says so out loud, rather than printing nothing: a silent line is
@@ -186,8 +195,8 @@ These are enforced mechanically:
 
 **Absence of evidence is not evidence of absence.** A drained upload queue means the
 archives went *out*, not that they never existed. Rotated-away logs leave no trace. The
-report's "WHAT THIS SCAN COULD NOT SEE" section prints on every run, including clean ones,
-for exactly this reason.
+report's "BLIND SPOTS" section prints on every run, including clean ones, for exactly
+this reason.
 
 **A file that mentions the bucket is not an install.** grokpatrol distinguishes an
 executable that *contains* the collector from a text file that merely *names* the
