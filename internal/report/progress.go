@@ -27,6 +27,10 @@ type Progress struct {
 	s  Style
 	mu sync.Mutex
 	n  int
+	// open is the detector name whose Checking line is still the last thing on
+	// screen and may be rewritten by Pulse. Empty when no line is open (after
+	// Checked, or when colour is off and we refuse in-place rewrites).
+	open string
 }
 
 func NewProgress(w io.Writer, s Style) *Progress {
@@ -51,7 +55,27 @@ func (p *Progress) Checking(detector, what string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.n++
-	fmt.Fprintf(p.w, "  %s %-9s %s\n", p.s.c(cyan, "→"), detector, p.s.c(dim, what))
+	p.writeCheckingLocked(detector, what)
+	// Only a colour (TTY) session rewrites in place: pipes and log captures must
+	// not fill with hundreds of Pulse lines, and without ANSI we cannot erase.
+	if p.s.Color {
+		p.open = detector
+	}
+}
+
+// Pulse rewrites the open Checking line with a live status so a long deepscan walk
+// does not look hung. No-op when colour is off (no in-place rewrite) or when no
+// Checking line is open for this detector.
+func (p *Progress) Pulse(detector, status string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.s.Color || p.open != detector || status == "" {
+		return
+	}
+	// Move to the previous line, clear it, reprint. Checking ended with \n, so the
+	// cursor sits on the blank line below; one CUU puts us on the → row.
+	fmt.Fprint(p.w, "\033[1A\033[2K\r")
+	p.writeCheckingLocked(detector, status)
 }
 
 // Checked prints what the detector found. The detector is named again here, and not
@@ -65,6 +89,7 @@ func (p *Progress) Checking(detector, what string) {
 func (p *Progress) Checked(detector, summary string, took time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.open = ""
 	if summary == "" {
 		summary = "nothing found"
 	}
@@ -74,6 +99,10 @@ func (p *Progress) Checked(detector, summary string, took time.Duration) {
 
 func (p *Progress) Done(total time.Duration) {
 	fmt.Fprintf(p.w, "\n  %s\n\n", p.s.c(dim, fmt.Sprintf("%d checks in %s", p.n, fmtDur(total))))
+}
+
+func (p *Progress) writeCheckingLocked(detector, what string) {
+	fmt.Fprintf(p.w, "  %s %-9s %s\n", p.s.c(cyan, "→"), detector, p.s.c(dim, what))
 }
 
 // fmtDur never prints "0s" for work that did happen: a check reported as taking no

@@ -47,6 +47,12 @@ type Env struct {
 	// because the shell searches $PATH left to right and the first match wins.
 	PathDirs []string
 
+	// Progress is live scan narration on stderr. Nil is fine (quiet / tests).
+	// deepscan Pulses during its walk so a minute-long blank terminal does not look
+	// hung; other detectors ignore it. The engine sets this from Engine.Progress
+	// before phase 1 -- detectors must not assume it stays nil-free across tests.
+	Progress Progress
+
 	// Discovered is filled by the deepscan phase and read by every later phase.
 	// It is the reason the phases are ordered rather than fully parallel: a stray
 	// .grok found under ~/work has logs and a config of its own, and those must be
