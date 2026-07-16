@@ -10,3 +10,11 @@
 # Go
 *.test
 *.out
+
+# Local agent tooling (Claude Code settings/worktrees, the impeccable design skill and
+# its critique artifacts) -- personal to a working copy, never repo content.
+.claude/
+.impeccable/
+.github/hooks/
+.github/skills/
+PRODUCT.md
