@@ -121,7 +121,7 @@ STATUS — QUEUED/COLLECTED/EXFILTRATED — archive total+unique in the ARCHIVES
 to the worst `maxLedgerRepos` repositories by default. The verdict banner leads with telegraph
 `exfilFacts` lines (Queued/Collected/Exfiltrated/Repos), folding the noun tally into the `Repos`
 line rather than a separate `Found:` line; severity counts move to `--verbose`. An `ACTION`
-banner (rotate + mitigate, both knobs sourced from `config.Mitigations()` with the harness key from `scan.MarkerFlag`) follows `GROK BUILD` on
+banner (rotate + mitigate; mitigation knobs sourced from `config.Mitigations()`, marker references from `scan.MarkerFlag`) follows `GROK BUILD` on
 EXPOSED/COMPROMISED, pointing at MITIGATIONS by default and expanding the TOML under `--verbose`.
 Colour is semantic (red = act now, yellow = exposure, cyan = a path, green = clean, dim =
 context). An animated `GROKPATROL` logo (ported from `optimuslabs-io/perceptron`) plays on
