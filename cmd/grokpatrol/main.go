@@ -74,7 +74,7 @@ func run() int {
 	if *showVer {
 		fmt.Printf("grokpatrol %s (%s, built %s, %s)\n",
 			buildinfo.Version, buildinfo.Commit, buildinfo.Date, buildinfo.GoVersion())
-		fmt.Println("built with <3 by Optimus Labs")
+		fmt.Println("github.com/optimuslabs-io/grokpatrol · Optimus Labs")
 		return 0
 	}
 
@@ -201,12 +201,12 @@ func defaultConcurrency() int {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `grokpatrol -- detect Grok Build repository exfiltration on this host
+	fmt.Fprint(os.Stderr, `grokpatrol — Grok Build repo exfil exposure check
 
 Answers three questions, entirely offline:
-  1. Did the Grok Build CLI collect and queue your repositories for upload to xAI?
-  2. Which repositories, how many times, and when?
-  3. What secrets went with them -- including files you deleted, which stayed in git history?
+  1. Which repositories were collected or queued for upload to xAI?
+  2. How many times, and when?
+  3. Which secrets went with them -- including files you deleted, which stayed in git history?
 
 It is read-only. It makes no network calls. It never executes the grok binary, and
 it never reads the contents of a secret: it reports filenames so you know what to rotate.
