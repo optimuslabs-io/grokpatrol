@@ -22,6 +22,10 @@ import (
 type Progress interface {
 	// Checking announces what a detector is about to look for, before it starts.
 	Checking(detector, what string)
+	// Pulse rewrites the in-flight Checking line with a live status (deepscan's
+	// walk). No-op when nothing is watching. Callers must be the same goroutine
+	// that called Checking for that detector -- Progress is not free-threaded.
+	Pulse(detector, status string)
 	// Checked reports what it found. summary is the detector's own one-liner.
 	Checked(detector, summary string, took time.Duration)
 	// Done closes out the run.
@@ -63,5 +67,6 @@ func Plural(n int, noun string) string {
 type nopProgress struct{}
 
 func (nopProgress) Checking(string, string)               {}
+func (nopProgress) Pulse(string, string)                  {}
 func (nopProgress) Checked(string, string, time.Duration) {}
 func (nopProgress) Done(time.Duration)                    {}

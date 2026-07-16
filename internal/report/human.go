@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -721,6 +722,21 @@ func dedupeBinaries(ev []model.Evidence) []model.Evidence {
 	return out
 }
 
+// primaryBinary picks the default-report install: the $PATH binary when one exists,
+// otherwise the first entry (already PATH-sorted by dedupeBinaries). extra is how many
+// other binaries were collapsed behind --verbose.
+func primaryBinary(bins []model.Evidence) (primary *model.Evidence, extra int) {
+	if len(bins) == 0 {
+		return nil, 0
+	}
+	for i := range bins {
+		if bins[i].PathEntry != "" {
+			return &bins[i], len(bins) - 1
+		}
+	}
+	return &bins[0], len(bins) - 1
+}
+
 // binLabel is the INSTALLATION left column. The install on $PATH is called out so a
 // reader scanning a host with several copies on disk sees which one actually runs.
 func binLabel(e model.Evidence, s Style) string {
@@ -769,26 +785,37 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 			// marker offset, so a binary carrying the bucket name at three offsets used to
 			// print as three identical "grok binary" rows. dedupeBinaries collapses them to
 			// one representative per path and floats the install on $PATH to the top.
-			for _, b := range dedupeBinaries(f.Evidence) {
-				label := binLabel(b, s)
-				if !s.Verbose {
-					// The path, size, and -- for the install that actually runs -- the $PATH
-					// highlight are what locate and identify the live install: a summary-level
-					// fact, printed in BOTH modes. The marker offset and sha256 are for someone
-					// diffing this build against a vendor's published hashes, a receipt task,
-					// so they wait for --verbose.
-					desc := fmt.Sprintf("%s (%s)", b.Path, humanBytes(b.SizeBytes))
-					if b.PathEntry != "" {
-						desc += "  " + s.c(red+bold, "<- runs when you type `grok`")
-						if b.PathEntry != b.Path {
-							desc += fmt.Sprintf("\n%s on your $PATH at %s (symlink to the file above)", pad, b.PathEntry)
-						}
-					}
-					lines = append(lines, [2]string{label, desc})
-					withheld = withheld || b.SHA256 != ""
-					continue
+			bins := dedupeBinaries(f.Evidence)
+			if s.Verbose {
+				for _, b := range bins {
+					lines = append(lines, [2]string{binLabel(b, s), binDesc(b, s)})
 				}
-				lines = append(lines, [2]string{label, binDesc(b, s)})
+				continue
+			}
+			// Default: the live install only. Extra downloads in ~/.grok/downloads (or
+			// copies elsewhere) are inventory -- same triage noise as a second config.toml
+			// row -- so they collapse to one pointer. If nothing is on $PATH, keep the
+			// first discovered binary so the section still locates an install.
+			primary, extra := primaryBinary(bins)
+			if primary != nil {
+				desc := fmt.Sprintf("%s (%s)", primary.Path, humanBytes(primary.SizeBytes))
+				if primary.PathEntry != "" {
+					desc += "  " + s.c(red+bold, "<- runs when you type `grok`")
+					if primary.PathEntry != primary.Path {
+						desc += fmt.Sprintf("\n%s on your $PATH at %s (symlink to the file above)", pad, primary.PathEntry)
+					}
+				}
+				lines = append(lines, [2]string{binLabel(*primary, s), desc})
+				withheld = withheld || primary.SHA256 != ""
+			}
+			for _, b := range bins {
+				withheld = withheld || b.SHA256 != ""
+			}
+			if extra > 0 {
+				lines = append(lines, [2]string{
+					s.c(dim, "also on disk"),
+					s.c(dim, engine.Plural(extra, "other grok binary")+" (--verbose)"),
+				})
 			}
 		}
 	}
@@ -884,6 +911,12 @@ func installation(w io.Writer, rep *model.Report, s Style) {
 // identical "the upload mitigations are not both set" rows. This groups every config
 // finding by the file it came from and, instead of that vague phrase, names the actual
 // mitigations at fault -- which is what the reader has to change.
+//
+// The default report shows ONE row: the config that governs the live install (the
+// .grok home of the $PATH binary, else Host.GrokHome, else the first path). Extra
+// homes collapse to a single "also checked" pointer -- two unlabeled config.toml
+// status lines read as duplicates when only one drives ACTION. --verbose lists every
+// path. Every rendered row includes the file path so distinct homes never look identical.
 func configRows(rep *model.Report, s Style) [][2]string {
 	type cfg struct {
 		absent, unparse, mitigated bool
@@ -928,10 +961,11 @@ func configRows(rep *model.Report, s Style) [][2]string {
 			c.wrongValue = append(c.wrongValue, key(f))
 		}
 	}
+	if len(order) == 0 {
+		return nil
+	}
 
-	var rows [][2]string
-	for _, p := range order {
-		c := byPath[p]
+	status := func(c *cfg) string {
 		var val string
 		switch {
 		case c.mitigated:
@@ -944,11 +978,102 @@ func configRows(rep *model.Report, s Style) [][2]string {
 		default:
 			val = s.c(yellow, "EXPOSED") + " -- " + mitigationDetail(c.wrongValue, c.notSet)
 		}
-		// Every branch above names "mitigation(s)" without saying what they actually are.
 		// "(see below)" points at the MITIGATIONS section printed right after this table.
-		rows = append(rows, [2]string{"config.toml", val + " (see below)"})
+		return val + " (see below)"
+	}
+	row := func(p string) [2]string {
+		val := status(byPath[p])
+		if p != "" {
+			val = p + "  " + val
+		}
+		return [2]string{"config.toml", val}
+	}
+
+	if s.Verbose {
+		var rows [][2]string
+		for _, p := range order {
+			rows = append(rows, row(p))
+		}
+		return rows
+	}
+
+	active := activeConfigPath(rep, order)
+	rows := [][2]string{row(active)}
+	if extra := len(order) - 1; extra > 0 {
+		rows = append(rows, [2]string{
+			s.c(dim, "also checked"),
+			s.c(dim, engine.Plural(extra, "other .grok home")+" (--verbose)"),
+		})
 	}
 	return rows
+}
+
+// activeConfigPath picks the config.toml the default INSTALLATION should highlight:
+// the one under the .grok home of the binary that runs when you type `grok`, else the
+// host's configured GrokHome, else the first path in discovery order.
+func activeConfigPath(rep *model.Report, order []string) string {
+	if len(order) == 0 {
+		return ""
+	}
+	matchHome := func(home string) string {
+		if home == "" {
+			return ""
+		}
+		for _, p := range order {
+			if p == "" {
+				continue
+			}
+			if grokHomeOf(p) == home || strings.HasPrefix(p, home+"/") {
+				return p
+			}
+		}
+		return ""
+	}
+	for _, f := range rep.Findings {
+		if f.ID != "deepscan.binary_marker" {
+			continue
+		}
+		for _, e := range f.Evidence {
+			if e.PathEntry == "" {
+				continue
+			}
+			if p := matchHome(grokHomeOf(e.Path)); p != "" {
+				return p
+			}
+		}
+	}
+	if p := matchHome(rep.Host.GrokHome); p != "" {
+		return p
+	}
+	for _, p := range order {
+		if p == "~/.grok/config.toml" {
+			return p
+		}
+	}
+	return order[0]
+}
+
+// grokHomeOf returns the .grok directory that owns path (a config.toml or a file
+// under the home), or "" when path is not under a .grok tree.
+func grokHomeOf(path string) string {
+	if path == "" {
+		return ""
+	}
+	dir := path
+	if strings.HasSuffix(path, "config.toml") {
+		dir = filepath.Dir(path)
+	}
+	for dir != "" && dir != "." && dir != string(filepath.Separator) {
+		if filepath.Base(dir) == ".grok" {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
 }
 
 // mitigations is the short lookup table the config.toml row's "(see below)" points at:
@@ -1601,6 +1726,12 @@ func short(id string) string {
 	return id[:12]
 }
 
+// maxDegradedExamples bounds the sample rows in the DEFAULT DEGRADED section. Three,
+// matching CREDENTIAL PATHS: the header already carries the true totals, and a wall of
+// macOS TCC paths buries the rest of the report. --verbose lists every error; --json
+// is the complete record.
+const maxDegradedExamples = 3
+
 func degraded(w io.Writer, rep *model.Report, s Style) {
 	if len(rep.Errors) == 0 {
 		return
@@ -1615,20 +1746,63 @@ func degraded(w io.Writer, rep *model.Report, s Style) {
 	}
 	fmt.Fprintln(w, s.c(bold+yellow, "DEGRADED")+s.c(dim, fmt.Sprintf("   (%d permission denials, %d other errors)", perm, other)))
 
-	shown := 0
-	for _, e := range rep.Errors {
-		if shown >= 8 {
-			fmt.Fprintf(w, "  %s\n", s.c(dim, fmt.Sprintf("... and %d more (use --json for all)", len(rep.Errors)-shown)))
-			break
-		}
+	errs := rep.Errors
+	if !s.Verbose {
+		errs = degradedExamples(rep.Errors)
+	}
+	for _, e := range errs {
 		loc := e.Path
 		if loc == "" {
 			loc = e.Detector
 		}
-		fmt.Fprintf(w, "  ! %s: %s\n", loc, e.Message)
-		shown++
+		if s.Verbose || e.Kind != "permission" {
+			fmt.Fprintf(w, "  ! %s: %s\n", loc, e.Message)
+			continue
+		}
+		// Permission denials are almost always the same message ("operation not
+		// permitted"); the path is the only fact that distinguishes them.
+		fmt.Fprintf(w, "  ! %s\n", loc)
+	}
+	if omitted := len(rep.Errors) - len(errs); omitted > 0 {
+		fmt.Fprintf(w, "  %s\n", s.c(dim, fmt.Sprintf("... and %d more (--verbose for paths, --json for all)", omitted)))
 	}
 	fmt.Fprintln(w)
+}
+
+// degradedExamples picks a few representative scan errors for the default report:
+// permission denials first (usually the bulk of a macOS walk), then other kinds.
+func degradedExamples(errs []model.ScanError) []model.ScanError {
+	if len(errs) <= maxDegradedExamples {
+		return errs
+	}
+	var perm, other []model.ScanError
+	for _, e := range errs {
+		if e.Kind == "permission" {
+			perm = append(perm, e)
+		} else {
+			other = append(other, e)
+		}
+	}
+	var out []model.ScanError
+	// If there are any non-permission errors, show at least one so the default
+	// summary doesn't hide the reason behind the "other errors" count.
+	if len(other) > 0 {
+		out = append(out, other[0])
+		other = other[1:]
+	}
+	for _, e := range perm {
+		if len(out) >= maxDegradedExamples {
+			break
+		}
+		out = append(out, e)
+	}
+	for _, e := range other {
+		if len(out) >= maxDegradedExamples {
+			break
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func limitations(w io.Writer, rep *model.Report, s Style) {

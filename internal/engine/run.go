@@ -38,6 +38,13 @@ func (e *Engine) Run(ctx context.Context, env *Env) *model.Report {
 	if e.Progress == nil {
 		e.Progress = nopProgress{}
 	}
+	// deepscan Pulses through Env so the long walk can narrate without importing
+	// report. Later phases do not pulse; leaving it set is harmless.
+	if _, ok := e.Progress.(nopProgress); ok {
+		env.Progress = nil
+	} else {
+		env.Progress = e.Progress
+	}
 	started := time.Now()
 	rep := &model.Report{
 		Schema:    model.SchemaVersion,

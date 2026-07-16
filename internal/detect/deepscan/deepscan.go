@@ -11,12 +11,15 @@ package deepscan
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
@@ -111,23 +114,64 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	}
 
 	seenDir := map[string]bool{}
+	var (
+		dirsVisited int
+		lastPulse   time.Time
+		lastPath    string
+	)
+	// pulseInterval is how often the → deepscan line may rewrite. Faster feels
+	// livelier; much faster burns CPU redrawing ANSI for no new information.
+	const pulseInterval = 150 * time.Millisecond
+	pulse := func(force bool) {
+		if env.Progress == nil {
+			return
+		}
+		now := time.Now()
+		if !force && now.Sub(lastPulse) < pulseInterval {
+			return
+		}
+		lastPulse = now
+		mu.Lock()
+		finds := len(disc.Installs()) + len(disc.UploadQueues) + len(disc.Archives)
+		if n := len(disc.GrokHomes); n > 1 {
+			// Configured home alone is not a "find"; extras are.
+			finds += n - 1
+		}
+		mu.Unlock()
+		where := lastPath
+		if where == "" {
+			where = "starting"
+		} else {
+			where = truncatePulsePath(hostfs.Display(where, env.Home), 48)
+		}
+		status := fmt.Sprintf("%s  ·  %s", where, engine.Plural(dirsVisited, "dir"))
+		if finds > 0 {
+			status += "  ·  " + engine.Plural(finds, "find")
+		}
+		env.Progress.Pulse("deepscan", status)
+	}
+
 	for _, root := range roots(env) {
 		if ctx.Err() != nil {
 			break
 		}
 		_ = walker.Walk(ctx, root, func(path string, e fs.DirEntry) error {
+			lastPath = path
 			if e.IsDir() {
 				if seenDir[path] {
 					return fs.SkipDir // priority roots overlap the home walk; do not redo them
 				}
 				seenDir[path] = true
+				dirsVisited++
 				structuralDir(path, e, &mu, &disc)
+				pulse(false)
 				return nil
 			}
 			if !hostfs.IsRegular(e) {
 				return nil
 			}
 			if structuralFile(path, e, &mu, &disc, addErr) {
+				pulse(true) // archives / metadata are real finds -- show immediately
 				return nil
 			}
 			// The upload_queue holds the victim's OWN staged data, not grok installs. Its
@@ -157,11 +201,13 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+			pulse(false)
 			return nil
 		})
 	}
 	close(candidates)
 	wg.Wait()
+	pulse(true) // final counts before Checked replaces the narrative
 
 	// The configured grok home is always in play, whether or not the walk saw it.
 	disc.GrokHomes = appendUnique(disc.GrokHomes, env.GrokHome)
@@ -366,6 +412,16 @@ func appendUnique(list []string, v string) []string {
 		}
 	}
 	return append(list, v)
+}
+
+// truncatePulsePath keeps the progress line from wrapping. Prefer the trailing
+// path segments so `~/Library/.../Foo` still names the leaf being walked.
+func truncatePulsePath(p string, max int) string {
+	if max < 8 || utf8.RuneCountInString(p) <= max {
+		return p
+	}
+	runes := []rune(p)
+	return "…" + string(runes[len(runes)-(max-1):])
 }
 
 func dedupe(in []string) []string {

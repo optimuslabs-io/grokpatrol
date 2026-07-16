@@ -97,33 +97,41 @@ func binReport(ev ...model.Evidence) *model.Report {
 }
 
 // When several grok binaries are on disk, the one that actually runs -- the install on
-// $PATH -- must be surfaced first and clearly marked, in BOTH the default and --verbose
-// reports: which copy is live is a summary-level fact, not receipt detail.
+// $PATH -- must be surfaced first and clearly marked. The default report keeps only that
+// row (extra copies collapse to "also on disk"); --verbose lists every path.
 func TestInstallationHighlightsPathBinaryFirst(t *testing.T) {
 	rep := binReport(
 		markerEv("/home/u/copies/grok-old", ""),
 		markerEv("/home/u/.grok/dist/cli.js", "/usr/local/bin/grok"), // the active one
 		markerEv("/home/u/backup/grok", ""),
 	)
-	for _, s := range []Style{{}, {Verbose: true}} {
-		out := renderStyle(rep, s)
 
-		active := strings.Index(out, "/home/u/.grok/dist/cli.js")
-		other := strings.Index(out, "/home/u/copies/grok-old")
-		if active < 0 || other < 0 {
-			t.Fatalf("verbose=%v: both binaries should render; got:\n%s", s.Verbose, out)
-		}
-		if active > other {
-			t.Errorf("verbose=%v: the $PATH binary must render before the others; got:\n%s", s.Verbose, out)
-		}
-		if !strings.Contains(out, "runs when you type") {
-			t.Errorf("verbose=%v: the active binary must be labelled as the one that runs; got:\n%s", s.Verbose, out)
-		}
+	def := renderStyle(rep, Style{})
+	if !strings.Contains(def, "/home/u/.grok/dist/cli.js") {
+		t.Errorf("default must show the $PATH binary; got:\n%s", def)
+	}
+	if strings.Contains(def, "/home/u/copies/grok-old") || strings.Contains(def, "/home/u/backup/grok") {
+		t.Errorf("default must not list secondary binaries in full; got:\n%s", def)
+	}
+	if !strings.Contains(def, "runs when you type") {
+		t.Errorf("default: the active binary must be labelled as the one that runs; got:\n%s", def)
+	}
+	if !strings.Contains(def, "also on disk") || !strings.Contains(def, "2 other grok binaries") {
+		t.Errorf("default must point at the other binaries via --verbose; got:\n%s", def)
 	}
 
-	// The $PATH entry location (distinct from the resolved file when it's a symlink into
-	// a bundle) is receipt detail -- only --verbose promises it.
 	verb := renderStyle(rep, Style{Verbose: true})
+	active := strings.Index(verb, "/home/u/.grok/dist/cli.js")
+	other := strings.Index(verb, "/home/u/copies/grok-old")
+	if active < 0 || other < 0 {
+		t.Fatalf("--verbose: both binaries should render; got:\n%s", verb)
+	}
+	if active > other {
+		t.Errorf("--verbose: the $PATH binary must render before the others; got:\n%s", verb)
+	}
+	if !strings.Contains(verb, "runs when you type") {
+		t.Errorf("--verbose: the active binary must be labelled as the one that runs; got:\n%s", verb)
+	}
 	if !strings.Contains(verb, "/usr/local/bin/grok") {
 		t.Errorf("--verbose must show the $PATH entry location; got:\n%s", verb)
 	}
