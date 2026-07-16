@@ -36,7 +36,7 @@ on:
     # Docs/metadata-only merges do not release. paths-ignore skips the run only when
     # EVERY changed file matches; a commit that also touches code still releases.
     paths-ignore:
-      - '**.md'
+      - '**/*.md'
       - 'llms.txt'
       - 'LICENSE'
       - 'NOTICE'
