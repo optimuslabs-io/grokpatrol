@@ -205,6 +205,58 @@ fixtures. Executables and packed bundles (≥512 KB, since Grok may ship as a Bu
 bundle with no executable magic) are reported as an install; small text files are listed
 for completeness and do not affect the verdict.
 
+## FAQ
+
+**Did the Grok Build CLI upload my git repositories to xAI?**
+grokpatrol answers this for *your* machine, from the evidence left on disk: it reports which
+repositories were collected and queued for upload to `gs://grok-code-session-traces/`, and
+whether an upload was confirmed. It cannot speak for machines it did not scan. Run it and read
+the `VERDICT`.
+
+**Which Grok Build CLI versions are affected?**
+`0.2.93` is the confirmed-affected build — publicly reproduced collecting whole repositories and
+uploading them. The collector is reported still present through at least `0.2.99`. grokpatrol
+detects versions `0.1.212` through the latest observed and labels each build CONFIRMED AFFECTED,
+REPORTED AFFECTED, or neither.
+
+**How do I check if Grok uploaded my code after the fact?**
+Most published indicators were network-based — you had to be watching the wire while it happened.
+grokpatrol is the after-the-fact check: it reads Grok's own logs (including rotated and gzipped),
+the `~/.grok/upload_queue/`, staged archive manifests, and the version, then names the repos and
+secrets involved. No live capture required.
+
+**The upload queue is empty and my logs rotated — does that mean I'm safe?**
+No. A drained queue means the archives went *out*, not that they never existed, and rotated-away
+logs leave no trace. That is why a degraded or blind scan reports INDETERMINATE, never CLEAN, and
+why the report prints what it could not see on every run.
+
+**How do I stop Grok from uploading my repositories?**
+Set **both** mitigations in `~/.grok/config.toml`: `harness.disable_codebase_upload = true` and
+`telemetry.trace_upload = false`. Either one alone is not enough — grokpatrol reports a host with
+only one set as EXPOSED, not mitigated.
+
+**What secrets were exposed, and which do I rotate first?**
+The exfiltrated set was every git object reachable from HEAD, so a secret you *deleted* from your
+checkout is still in history and went out with it. grokpatrol flags those first: rotate the
+credentials you can no longer see in your own working tree before the rest.
+
+**Does grokpatrol read or transmit my secret values?**
+Never. It reports secret *locations* (path and git object id) so you know what to rotate, and is
+structurally incapable of reading their *contents*: `git cat-file` is off its allowlist and the
+evidence model has no field that can hold file contents. It makes no network calls at all — proven
+by the linker (`make verify-deps`), which asserts `net`/`net/http`/`crypto/tls` are not linked in.
+
+**Is it safe to run on a possibly-compromised host?**
+That is the design target. grokpatrol is a single static binary, stdlib-only, offline, and
+read-only (every file open is `O_RDONLY`; a test proves `.git` is byte-for-byte unchanged after a
+scan). It never executes the `grok` binary. Release binaries carry sigstore provenance, so you can
+prove one was built by this repo's workflow before running it — see [AGENTS.md](AGENTS.md).
+
+**Can I run grokpatrol across a fleet or in CI?**
+Yes. `grokpatrol --json` emits the complete forensic record on stdout for collection; the exit
+code is `0` whenever the scan ran (whatever it found) and `1` only on tool failure, so read the
+verdict from the report, not the exit status: `grokpatrol --json | jq -r .verdict`.
+
 ## Development
 
 `make` on its own lists every target.
