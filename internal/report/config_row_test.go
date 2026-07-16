@@ -15,6 +15,19 @@ func cfgFinding(id, key, path string) model.Finding {
 	}
 }
 
+// countConfigRows counts INSTALLATION config.toml status rows (not ACTION prose that
+// also mentions config.toml).
+func countConfigRows(out string) int {
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "config.toml") && (strings.Contains(line, "EXPOSED") || strings.Contains(line, "MITIGATED")) {
+			n++
+		}
+	}
+	return n
+}
+
 // The config detector emits one finding PER mitigation, so a config with neither set
 // produced two identical "the upload mitigations are not both set" rows. There must now
 // be ONE config.toml row, and it must name the specific mitigations rather than repeat a
@@ -31,8 +44,14 @@ func TestConfigRowDedupesAndNamesMitigations(t *testing.T) {
 	Human(&buf, rep, Style{})
 	out := buf.String()
 
-	if n := strings.Count(out, "config.toml  EXPOSED"); n != 1 {
+	if n := countConfigRows(out); n != 1 {
 		t.Errorf("want exactly one config.toml row, got %d:\n%s", n, out)
+	}
+	if !strings.Contains(out, "~/.grok/config.toml") {
+		t.Errorf("config.toml row must show the path; got:\n%s", out)
+	}
+	if !strings.Contains(out, "EXPOSED") {
+		t.Errorf("want EXPOSED config state; got:\n%s", out)
 	}
 	if strings.Contains(out, "not both set") {
 		t.Errorf("the vague phrase must give way to named mitigations; got:\n%s", out)
@@ -65,20 +84,65 @@ func TestConfigRowDistinguishesWrongFromMissing(t *testing.T) {
 	}
 }
 
-// Two genuinely distinct config.toml files (two grok homes) still get a row each -- the
-// dedupe is per file, not a blanket collapse.
+// Two genuinely distinct config.toml files (two grok homes): the default report shows
+// the active home only (with its path) plus an "also checked" pointer; --verbose lists
+// both. Leaving both as unlabeled config.toml rows made the difference imperceptible.
 func TestConfigRowKeepsDistinctFiles(t *testing.T) {
 	rep := &model.Report{
 		Verdict: model.VerdictExposed,
+		Host:    model.HostInfo{GrokHome: "~/.grok"},
 		Findings: []model.Finding{
 			cfgFinding("config.not_mitigated", "telemetry.trace_upload", "~/.grok/config.toml"),
 			cfgFinding("config.not_mitigated", "telemetry.trace_upload", "~/work/.grok/config.toml"),
 		},
 	}
-	var buf bytes.Buffer
-	Human(&buf, rep, Style{})
-	if n := strings.Count(buf.String(), "config.toml  EXPOSED"); n != 2 {
-		t.Errorf("two distinct config files should give two rows, got %d:\n%s", n, buf.String())
+	def := renderStyle(rep, Style{})
+	if n := countConfigRows(def); n != 1 {
+		t.Errorf("default: want one config.toml row (active home), got %d:\n%s", n, def)
+	}
+	if !strings.Contains(def, "~/.grok/config.toml") {
+		t.Errorf("default: active config path must be visible; got:\n%s", def)
+	}
+	if strings.Contains(def, "~/work/.grok/config.toml") {
+		t.Errorf("default: secondary home must not get a full config.toml row; got:\n%s", def)
+	}
+	if !strings.Contains(def, "also checked") || !strings.Contains(def, "--verbose") {
+		t.Errorf("default: must point at the other home via --verbose; got:\n%s", def)
+	}
+
+	verb := renderStyle(rep, Style{Verbose: true})
+	if n := countConfigRows(verb); n != 2 {
+		t.Errorf("--verbose: both config files should get a row, got %d:\n%s", n, verb)
+	}
+	for _, want := range []string{"~/.grok/config.toml", "~/work/.grok/config.toml"} {
+		if !strings.Contains(verb, want) {
+			t.Errorf("--verbose missing %q; got:\n%s", want, verb)
+		}
+	}
+}
+
+// The default config.toml row includes the path so two homes never look identical, and
+// prefers the .grok home of the $PATH binary when one is known.
+func TestConfigRowPrefersPathBinaryHome(t *testing.T) {
+	rep := &model.Report{
+		Verdict: model.VerdictExposed,
+		Findings: []model.Finding{
+			{
+				ID: "deepscan.binary_marker", Detector: "deepscan", Severity: model.SevHigh,
+				Evidence: []model.Evidence{{
+					Path: "~/.grok/downloads/grok", PathEntry: "~/.grok/bin/grok",
+				}},
+			},
+			cfgFinding("config.absent", "", "~/.grok/config.toml"),
+			cfgFinding("config.unparseable", "", "~/work/.grok/config.toml"),
+		},
+	}
+	out := renderStyle(rep, Style{})
+	if !strings.Contains(out, "~/.grok/config.toml") {
+		t.Errorf("PATH binary's home config must be the default row; got:\n%s", out)
+	}
+	if strings.Contains(out, "UNCONFIRMED") {
+		t.Errorf("secondary unparseable home must not dominate the default row; got:\n%s", out)
 	}
 }
 
