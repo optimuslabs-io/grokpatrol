@@ -20,7 +20,7 @@ func TestLogoIsPipeSafeWithoutColor(t *testing.T) {
 	if strings.Contains(out, "\033[") {
 		t.Error("the logo emitted ANSI escapes with colour disabled -- a pipe or log file would see them")
 	}
-	if !strings.Contains(out, "Optimus Labs") || !strings.Contains(out, "Grok Build exfiltration audit") {
+	if !strings.Contains(out, "Optimus Labs") || !strings.Contains(out, "Grok Build repo exfil exposure check") {
 		t.Error("the plain logo fallback is missing its subtitle")
 	}
 	// A forensic scanner that hunts for the bucket marker must not carry it in its own

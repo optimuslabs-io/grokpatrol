@@ -30,14 +30,13 @@ const grokPatrolLogoArt = `
 | |_| |  _ < | |_| | . \ |  __// ___ \| | |  _ < | |_| | |___
  \____|_| \_\ \___/|_|\_\|_|  /_/   \_\_| |_| \_\ \___/|_____|`
 
-// logoSubtitle is the three lines beneath the wordmark. heart is "♥" in colour mode
-// and degrades to "<3" when unicode/colour is off. The attribution line matches the
-// reference's "by Optimus Labs".
-func logoSubtitle(heart string) []string {
+// logoSubtitle is the three lines beneath the wordmark: the question this scan
+// answers, the trust contract, then repo provenance.
+func logoSubtitle() []string {
 	return []string{
-		"     Grok Build exfiltration audit — offline, read-only",
-		"     built with " + heart + " by Optimus Labs",
-		"     Learn more at https://optimuslabs.io",
+		"     Grok Build repo exfil exposure check",
+		"     Offline · read-only · never executes grok",
+		"     github.com/optimuslabs-io/grokpatrol · Optimus Labs",
 	}
 }
 
@@ -137,7 +136,7 @@ func animateLogo(w io.Writer, s Style) {
 	}
 
 	// Subtitle, with colour roles.
-	for _, line := range logoSubtitle("♥") {
+	for _, line := range logoSubtitle() {
 		fmt.Fprintln(w, subtitleColored(line, s))
 		time.Sleep(15 * time.Millisecond)
 	}
@@ -145,13 +144,11 @@ func animateLogo(w io.Writer, s Style) {
 	time.Sleep(300 * time.Millisecond)
 }
 
-// subtitleColored gives each subtitle line its role colour: the tagline cyan-bold, the
-// attribution green-bold, the link dim.
+// subtitleColored gives each subtitle line its role colour: the question and trust
+// contract cyan-bold, the repo line dim.
 func subtitleColored(line string, s Style) string {
 	switch {
-	case strings.Contains(line, "Optimus Labs"):
-		return s.c(green+bold, line)
-	case strings.Contains(line, "Learn more"):
+	case strings.Contains(line, "github.com/optimuslabs-io/grokpatrol"):
 		return s.c(dim, line)
 	case strings.TrimSpace(line) == "":
 		return line
@@ -161,10 +158,10 @@ func subtitleColored(line string, s Style) string {
 }
 
 // plainLogo prints the wordmark and subtitle with no ANSI at all -- the non-TTY /
-// colour-off fallback. "<3", not "♥", so a plain terminal never shows mojibake.
+// colour-off fallback.
 func plainLogo(w io.Writer, _ Style) {
 	fmt.Fprintln(w, strings.Trim(grokPatrolLogoArt, "\n"))
-	for _, line := range logoSubtitle("<3") {
+	for _, line := range logoSubtitle() {
 		fmt.Fprintln(w, line)
 	}
 	fmt.Fprintln(w)
