@@ -1787,6 +1787,12 @@ func degradedExamples(errs []model.ScanError) []model.ScanError {
 		}
 	}
 	var out []model.ScanError
+	// If there are any non-permission errors, show at least one so the default
+	// summary doesn't hide the reason behind the "other errors" count.
+	if len(other) > 0 {
+		out = append(out, other[0])
+		other = other[1:]
+	}
 	for _, e := range perm {
 		if len(out) >= maxDegradedExamples {
 			break
