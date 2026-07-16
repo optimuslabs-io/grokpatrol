@@ -49,7 +49,7 @@ release; please reproduce on the newest version before reporting.
 
 ## Verifying what you run
 
-Every release binary carries reproducible-build provenance. Before trusting one:
+Every release binary carries sigstore build provenance. Before trusting one:
 
 ```sh
 gh attestation verify <binary> -R optimuslabs-io/grokpatrol
