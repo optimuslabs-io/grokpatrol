@@ -11,7 +11,7 @@ ask from the evidence left on disk: which repositories were taken, and what must
 Confirmed-affected build: 0.2.93. Reported present through at least 0.2.99. Detects 0.1.212
 through the latest observed. macOS and Linux, amd64 and arm64.
 
-Guarantees, mechanically enforced: no network (net/net/http/crypto/tls not linked; empty go.sum),
+Guarantees, mechanically enforced: no network (net/net/http/crypto/tls not linked; go.sum absent/empty — enforced by verify-deps),
 read-only (O_RDONLY only), zero third-party dependencies, never executes the grok binary, never
 reads secret values (git cat-file off the allowlist), and a degraded scan never reports CLEAN.
 

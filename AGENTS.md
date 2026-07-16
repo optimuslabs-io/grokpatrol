@@ -13,7 +13,7 @@ repositories to xAI, and which secrets went with them.
    ```sh
    go install github.com/optimuslabs-io/grokpatrol/cmd/grokpatrol@latest
    ```
-   Installs to `$(go env GOPATH)/bin`. No third-party modules are fetched (`go.sum` is empty).
+   Installs to `$GOBIN` (or `$(go env GOPATH)/bin` if `GOBIN` is unset). No third-party modules are fetched (`go.sum` is absent).
 
 2. **No Go toolchain — verified binary download.** Release assets follow a constructable scheme;
    no HTML scraping or API calls are required:
@@ -27,9 +27,10 @@ repositories to xAI, and which secrets went with them.
    tag="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/optimuslabs-io/grokpatrol/releases/latest)"
    tag="${tag##*/}"
    ```
-   Then download the matching asset **and** `SHA256SUMS`, verify, and only install on match:
+   Then download the matching asset **and** `SHA256SUMS`, set `os` and `arch` to your platform
+   (e.g. `os=linux arch=amd64`), verify, and only install on match:
    ```sh
-   sha256sum -c --ignore-missing SHA256SUMS   # shasum -a 256 -c on macOS
+   grep "  grokpatrol_${tag}_${os}_${arch}" SHA256SUMS | sha256sum -c   # shasum -a 256 -c on macOS
    ```
 
 3. **Install script** (non-interactive, no `sudo`, verifies the checksum before installing):
@@ -98,7 +99,7 @@ degraded scan never reports `CLEAN`.
 These are mechanically enforced in the codebase, not aspirational:
 
 - **No network, ever.** `net`, `net/http`, `crypto/tls` are not linked in (`make verify-deps`);
-  `go.sum` is empty. The binary cannot phone home, and there is no telemetry or update ping.
+  `go.sum` is absent (no third-party dependencies). The binary cannot phone home, and there is no telemetry or update ping.
 - **Read-only.** Every file open is `O_RDONLY` through one function; no write/create/rename/remove.
   A test proves `.git` is byte-for-byte identical after a scan.
 - **Never executes the `grok` binary** — not even `--version`. Version is inferred passively.
