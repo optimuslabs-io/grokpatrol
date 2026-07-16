@@ -633,16 +633,13 @@ func needsRotate(rep *model.Report) bool {
 // host with both a mitigated and an unmitigated config finding (two grok homes) still
 // needs the advice: "mitigated" alone must not suppress it.
 func needsMitigate(rep *model.Report) bool {
-	mitigated, unmitigated := false, false
 	for _, f := range rep.Findings {
 		switch f.ID {
-		case "config.mitigated":
-			mitigated = true
 		case "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable":
-			unmitigated = true
+			return true
 		}
 	}
-	return unmitigated && !mitigated
+	return false
 }
 
 // mitigateKnobs renders the two required config.toml settings as one phrase, e.g.
@@ -1138,13 +1135,13 @@ func ledger(w io.Writer, rep *model.Report, s Style) {
 		// Repeating it a third time here is noise in the default report, so the
 		// elaboration is --verbose only.
 		if s.Verbose {
-			fmt.Fprintf(w, "\n  %s %s\n", s.c(red+bold, "delivery:"),
+			fmt.Fprintf(w, "\n  %s %s\n", s.c(red+bold, "exfiltration:"),
 				s.c(red, "CONFIRMED -- Grok's log records the transfer completing."))
 			fmt.Fprintf(w, "  %s\n", s.c(dim, "This is the strongest statement this tool can make. It is not inferred from"))
 			fmt.Fprintf(w, "  %s\n", s.c(dim, "collection or queueing: the upload itself was logged as finished."))
 		}
 	} else if delivery != nil {
-		fmt.Fprintf(w, "\n  %s %s\n", s.c(dim, "delivery:"), s.c(dim, delivery.Title))
+		fmt.Fprintf(w, "\n  %s %s\n", s.c(dim, "exfiltration:"), s.c(dim, delivery.Title))
 		// The standing "no upload-completion event" explanation is receipt-grade context,
 		// not a finding to act on -- the ARCHIVES column above is what to act on -- so the
 		// default report keeps just the one-line status and the reasoning waits for
