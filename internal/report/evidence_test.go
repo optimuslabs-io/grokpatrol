@@ -106,8 +106,8 @@ func TestDefaultReportPointsAtWhatItWithholds(t *testing.T) {
 		t.Error("the default report does not say how many archives were queued, and to how many DISTINCT " +
 			"objects -- the gap between those two numbers is what tells retries apart from separate snapshots")
 	}
-	if !strings.Contains(out, "secret file") {
-		t.Error("the default report does not say how many secrets were found")
+	if !strings.Contains(out, "credential path") {
+		t.Error("the default report does not say how many credential paths were found")
 	}
 	// And the pointer to everything it did not.
 	if !strings.Contains(out, "--verbose") {
@@ -159,7 +159,10 @@ func TestReportNeverPrintsASecretValue(t *testing.T) {
 	}
 	// The default must at least say one exists, and that it is the dangerous kind.
 	def := renderStyle(compromised(), Style{})
-	if !strings.Contains(def, "deleted from the checkout but still in history") {
+	if !strings.Contains(def, "DELETED") {
+		t.Error("the default report is missing the DELETED column for credential paths")
+	}
+	if !strings.Contains(def, "deleted from checkout, still in history") {
 		t.Error("the default report does not flag the secrets the user CANNOT find by looking at their own " +
 			"checkout -- which is the only class of secret this tool exists to surface")
 	}

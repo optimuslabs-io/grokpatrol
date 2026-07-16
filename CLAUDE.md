@@ -113,16 +113,20 @@ cites the specific log file it came from, since rotated logs may disagree.
 
 The default report holds to one rule — lead with the number, show a few examples, point to
 `--verbose`/`--json` for the rest. INSTALLATION is a summary (binary path + config state; the
-sha256, per-version inventory, `auth.json` and other keys are `--verbose`). SECRETS shows counts
-plus a few risk-classified example filenames (deleted-from-checkout first), never a value or blob
-id. The EXFILTRATION LEDGER is one table (archive total+unique in the ARCHIVES cell; `ATTEMPTS`
-and the full `gs://` list under `--verbose`), capped to the worst `maxLedgerRepos` repositories by
-default. The verdict line leads with a concrete `Found: N repos · M archives · K secrets` tally;
-severity counts move to `--verbose`. Colour is semantic (red = act now, yellow = exposure, cyan =
-a path, green = clean, dim = context). An animated `GROKPATROL` logo (ported from
-`optimuslabs-io/perceptron`) plays on **stderr** at scan start — TTY + colour only,
-`--no-animation` / `GROKPATROL_NO_ANIM` / `--quiet` skip it — never stdout, so `--json | jq` is
-untouched.
+sha256, per-version inventory, `auth.json` and other keys are `--verbose`). CREDENTIAL PATHS
+shows a PATH/PATHS/DELETED count table plus a few risk-classified example filenames
+(deleted-from-checkout first), never a value or blob id. AFFECTED REPOS is one table (PATH,
+STATUS — QUEUED/COLLECTED/EXFILTRATED — archive total+unique in the ARCHIVES cell, WINDOW; the
+401s column and verbose-only `ATTEMPTS` and the full `gs://` list are under `--verbose`), capped
+to the worst `maxLedgerRepos` repositories by default. The verdict banner leads with telegraph
+`exfilFacts` lines (Queued/Collected/Exfiltrated/Repos), folding the noun tally into the `Repos`
+line rather than a separate `Found:` line; severity counts move to `--verbose`. An `ACTION`
+banner (rotate + mitigate, both knobs named via `scan.MarkerFlag`) follows `GROK BUILD` on
+EXPOSED/COMPROMISED, pointing at MITIGATIONS by default and expanding the TOML under `--verbose`.
+Colour is semantic (red = act now, yellow = exposure, cyan = a path, green = clean, dim =
+context). An animated `GROKPATROL` logo (ported from `optimuslabs-io/perceptron`) plays on
+**stderr** at scan start — TTY + colour only, `--no-animation` / `GROKPATROL_NO_ANIM` / `--quiet`
+skip it — never stdout, so `--json | jq` is untouched.
 
 ## Conventions
 

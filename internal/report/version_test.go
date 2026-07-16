@@ -37,13 +37,13 @@ func TestConfirmedAffectedIsHoistedAboveInstallation(t *testing.T) {
 		model.VersionEvidence{Version: "0.2.93", Source: "logs", Confidence: "high",
 			Class: model.VersionConfirmedAffected}))
 
-	banner := strings.Index(out, "CONFIRMED AFFECTED")
+	banner := strings.Index(out, "confirmed affected")
 	install := strings.Index(out, "INSTALLATION")
 	if banner < 0 {
 		t.Fatalf("the confirmed-affected build is not called out at all:\n%s", out)
 	}
 	if install >= 0 && banner > install {
-		t.Errorf("CONFIRMED AFFECTED renders below INSTALLATION -- it is still buried in a table")
+		t.Errorf("confirmed affected renders below INSTALLATION -- it is still buried in a table")
 	}
 	if !strings.Contains(out, "0.2.93") {
 		t.Error("the banner does not name the version")
@@ -62,7 +62,7 @@ func TestAffectedBannerPrintsOnEveryVerdict(t *testing.T) {
 		out := render(t, reportWith(v,
 			model.VersionEvidence{Version: "0.2.93", Source: "logs", Confidence: "high",
 				Class: model.VersionConfirmedAffected}))
-		if !strings.Contains(out, "CONFIRMED AFFECTED") {
+		if !strings.Contains(out, "confirmed affected") {
 			t.Errorf("verdict %s: the affected build was not called out", v)
 		}
 	}
@@ -76,7 +76,7 @@ func TestLowConfidenceVersionNeverShouts(t *testing.T) {
 	out := render(t, reportWith(model.VerdictExposed,
 		model.VersionEvidence{Version: "0.2.93", Source: "binary-strings", Confidence: "low",
 			Class: model.VersionConfirmedAffected}))
-	if strings.Contains(out, "CONFIRMED AFFECTED") {
+	if strings.Contains(out, "confirmed affected") {
 		t.Error("a semver scraped from a binary's string table was promoted to the banner")
 	}
 }
@@ -87,10 +87,10 @@ func TestReportedAffectedIsNotClaimedAsConfirmed(t *testing.T) {
 	out := render(t, reportWith(model.VerdictExposed,
 		model.VersionEvidence{Version: "0.2.97", Source: "logs", Confidence: "high",
 			Class: model.VersionReportedAffected}))
-	if strings.Contains(out, "CONFIRMED AFFECTED") {
-		t.Error("a merely REPORTED-affected build was announced as CONFIRMED")
+	if strings.Contains(out, "·  confirmed affected") {
+		t.Error("a merely REPORTED-affected build was announced as confirmed")
 	}
-	if !strings.Contains(out, "REPORTED AFFECTED") {
+	if !strings.Contains(out, "in reported-affected range") {
 		t.Errorf("the reported-affected build was not called out at all:\n%s", out)
 	}
 }
@@ -101,7 +101,7 @@ func TestNoAffectedVersionNoBanner(t *testing.T) {
 	out := render(t, reportWith(model.VerdictClean,
 		model.VersionEvidence{Version: "9.9.9", Source: "logs", Confidence: "high",
 			Class: model.VersionUnknown}))
-	if strings.Contains(out, "AFFECTED") {
+	if strings.Contains(out, "confirmed affected") || strings.Contains(out, "reported-affected") {
 		t.Errorf("a version outside the known-bad range was announced as affected:\n%s", out)
 	}
 }
