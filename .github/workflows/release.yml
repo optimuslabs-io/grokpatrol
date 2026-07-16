@@ -43,6 +43,7 @@ on:
       - '.github/ISSUE_TEMPLATE/**'
       - '.gitignore'
       - 'demo.tape'
+      - 'docs/**'
 
 permissions:
   contents: read
