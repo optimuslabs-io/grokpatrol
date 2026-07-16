@@ -1,0 +1,40 @@
+# grokpatrol
+
+> Single-binary, offline, read-only forensic scanner that detects, on your machine, whether the Grok Build CLI collected and queued your git repositories for upload to xAI — and reports which secrets went with them, by location, never by value.
+
+grokpatrol is the after-the-fact check for the Grok Build CLI repository-exfiltration incident.
+The collector ran outside the tool-call permission system and shipped every git object reachable
+from HEAD — including files deleted from the checkout but still alive in history, where secrets
+hide. Most published indicators were network-based; grokpatrol answers the question you can still
+ask from the evidence left on disk: which repositories were taken, and what must be rotated.
+
+Confirmed-affected build: 0.2.93. Reported present through at least 0.2.99. Detects 0.1.212
+through the latest observed. macOS and Linux, amd64 and arm64.
+
+Guarantees, mechanically enforced: no network (net/net/http/crypto/tls not linked; empty go.sum),
+read-only (O_RDONLY only), zero third-party dependencies, never executes the grok binary, never
+reads secret values (git cat-file off the allowlist), and a degraded scan never reports CLEAN.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/README.md): what it is, install, usage, the report format, exit codes, guarantees, and FAQ.
+- [AGENTS.md](https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/AGENTS.md): machine-readable contract for agents — ranked install, how to run, exit-code and verdict taxonomy, safety assertions.
+
+## Install
+
+- [go install](https://pkg.go.dev/github.com/optimuslabs-io/grokpatrol): `go install github.com/optimuslabs-io/grokpatrol/cmd/grokpatrol@latest` — hermetic, stdlib-only, preferred.
+- [Releases](https://github.com/optimuslabs-io/grokpatrol/releases): verified binaries named `grokpatrol_<tag>_<os>_<arch>` with `SHA256SUMS` and sigstore attestation.
+- [install.sh](https://raw.githubusercontent.com/optimuslabs-io/grokpatrol/main/install.sh): non-interactive installer that verifies the checksum before installing; no sudo.
+
+## Run
+
+- `grokpatrol --json` — complete machine-readable forensic record on stdout (stderr carries progress).
+- Read the finding from the report's `VERDICT` (or `--json | jq -r .verdict`): COMPROMISED, EXPOSED, INDETERMINATE, or CLEAN. Exit code is 0 whenever the scan ran, 1 only on tool failure — never a finding.
+
+## Mitigation
+
+- Stop uploads by setting BOTH in `~/.grok/config.toml`: `harness.disable_codebase_upload = true` and `telemetry.trace_upload = false`. Either alone is EXPOSED, not mitigated.
+
+## Source
+
+- [Repository](https://github.com/optimuslabs-io/grokpatrol): Go, standard library only.
