@@ -20,6 +20,7 @@ import (
 	"github.com/optimuslabs-io/grokpatrol/internal/detect/version"
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/model"
+	"github.com/optimuslabs-io/grokpatrol/internal/report"
 	"github.com/optimuslabs-io/grokpatrol/internal/scan"
 )
 
@@ -124,6 +125,118 @@ func TestCompromisedHostEndToEnd(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The full-channel leak guarantee for --full-secrets-search.
+//
+// The older "auth token never leaks" subtest predates content scanning: back
+// then a secret's value never entered the process, so checking the Report
+// struct was checking everything. Content scanning reads values into memory,
+// which creates channels that a struct dump does not cover -- stderr progress
+// lines, error/note/limitation strings, and both renderers. So: plant values
+// that the CONTENT tier (not the filename tier) must find, run the whole
+// engine with the flag on, render every output channel the binary has, and
+// grep each one for every planted value.
+func TestFullSecretsSearchNeverLeaksValues(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	// awsKey and ghPAT are invented, credential-SHAPED values, split into
+	// fragments rather than spelled out as one literal: GitHub's push-protection
+	// secret scanner pattern-matches file text on push and cannot tell fake from
+	// real, same reasoning as scan/markers.go's reversed markers.
+	const (
+		awsKey = "AKIA" + "QYLPMN5HHHFPZAM2"                     // innocent filename: only content matching sees it
+		ghPAT  = "ghp_" + "x7Qm2KpL9vTzR4wNc8bYhJ3sD6fGa1eU5iOk" // still in HEAD
+		dbPass = "hunter2"                                       // inside a filename-tier .env
+		xaiTok = "xai-SECRET-TOKEN-DO-NOT-PRINT"                 // auth.json is never opened
+	)
+
+	home := t.TempDir()
+	repo := filepath.Join(home, "work", "api")
+	write(t, filepath.Join(home, ".grok", "logs", "unified.jsonl"), lines(
+		ev(`{"event":"%s.start","sid":"sess-z9","ctx":{"turn_number":1,"repo_path":%q},"ts":"2026-06-30T10:00:00Z"}`, scan.MarkerEvent, repo),
+	))
+	write(t, filepath.Join(home, ".grok", "config.toml"), "[harness]\nmodel = \"grok-code-fast\"\n")
+	write(t, filepath.Join(home, ".grok", "auth.json"), `{"key":"`+xaiTok+`"}`)
+	gitRepo(t, repo, func(g func(...string), w func(string, string)) {
+		w("config/database.yml", "production:\n  aws_access_key_id: "+awsKey+"\n")
+		w("tools/sync.sh", "#!/bin/sh\nGH_PAT="+ghPAT+"\n")
+		w(".env.production", "DATABASE_URL=postgres://user:"+dbPass+"@prod/db")
+		g("add", "-A")
+		g("commit", "-qm", "initial")
+		g("rm", "-q", "config/database.yml", ".env.production")
+		g("commit", "-qm", "delete (they live on in history)")
+	})
+
+	// Capture the stderr channel: progress narration, detector summaries.
+	var stderrBuf strings.Builder
+	prog := report.NewProgress(&stderrBuf, report.Style{})
+
+	env := &engine.Env{
+		Home:              home,
+		GrokHome:          filepath.Join(home, ".grok"),
+		ScanRoots:         []string{home},
+		ConfineWalk:       true,
+		Concurrency:       4,
+		MaxFileSize:       512 << 20,
+		UseGit:            true,
+		HistoryScope:      "head",
+		MaxGitObjects:     1_000_000,
+		GitTimeout:        30 * time.Second,
+		FullSecretsSearch: true,
+	}
+	eng := &engine.Engine{
+		Discover:        deepscan.New(),
+		Readers:         []engine.Detector{logs.New(), queue.New(), cfgdet.New(), version.New()},
+		Triage:          secrets.New(),
+		DetectorTimeout: 2 * time.Minute,
+		Progress:        prog,
+	}
+	rep := eng.Run(context.Background(), env)
+
+	// Prove the content tier actually fired -- a leak test over a scan that found
+	// nothing would pass vacuously.
+	api := repoBySuffix(rep, "work/api")
+	if api == nil {
+		t.Fatal("the implicated repo was not triaged")
+	}
+	foundContent := false
+	for _, h := range api.SecretFiles {
+		if h.Path == "config/database.yml" && h.Class == "aws-access-token" {
+			foundContent = true
+		}
+	}
+	if !foundContent {
+		t.Fatalf("content tier did not fire; hits: %+v", api.SecretFiles)
+	}
+
+	// Every output channel the binary has, rendered exactly as main.go renders it.
+	report.Display(rep, home)
+	channels := map[string]string{}
+	var human, humanVerbose, js strings.Builder
+	report.Human(&human, rep, report.Style{})
+	report.Human(&humanVerbose, rep, report.Style{Verbose: true})
+	if err := report.JSON(&js, rep); err != nil {
+		t.Fatal(err)
+	}
+	channels["default report (stdout)"] = human.String()
+	channels["--verbose report (stdout)"] = humanVerbose.String()
+	channels["--json (stdout)"] = js.String()
+	channels["progress (stderr)"] = stderrBuf.String()
+	channels["report struct (%+v)"] = fmt.Sprintf("%+v", *rep)
+
+	for name, out := range channels {
+		for _, forbidden := range []string{awsKey, ghPAT, dbPass, xaiTok} {
+			if strings.Contains(out, forbidden) {
+				t.Errorf("%s contains the planted value %q -- grokpatrol reports secret LOCATIONS, never VALUES", name, forbidden)
+			}
+		}
+	}
+	// And the channels must still be USEFUL: the verbose report names the file.
+	if !strings.Contains(channels["--verbose report (stdout)"], "config/database.yml") {
+		t.Error("the verbose report does not name config/database.yml; value-free must not mean information-free")
+	}
 }
 
 // A host with no Grok on it must not be reported as EXPOSED. This is the

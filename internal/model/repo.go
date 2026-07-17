@@ -46,19 +46,23 @@ type Archive struct {
 }
 
 type SecretHit struct {
-	Path      string `json:"path"`  // repo-relative: you have to know what to rotate
-	Class     string `json:"class"` // "dotenv", "private-key", "cloud-credential", ...
+	// Class is a filename shape ("dotenv", "private-key", ...) on a default run,
+	// or a gitleaks rule id ("aws-access-token", "github-pat", ...) when
+	// --full-secrets-search matched the file's contents. Either way it names
+	// WHAT to rotate; there is no field here -- or anywhere in model -- that
+	// could carry the value itself.
+	Path      string `json:"path"` // repo-relative: you have to know what to rotate
+	Class     string `json:"class"`
 	InHEAD    bool   `json:"in_head"`
 	InHistory bool   `json:"in_history"`
 	// Blob is the git object id of this file's contents, straight out of
 	// `git rev-list --objects HEAD` -- the very command whose output defined the
-	// uploaded set. It is the strongest evidence in the report and it costs nothing:
-	// the parser was already splitting it off each line and throwing it away.
-	//
-	// It is what lets the USER verify a claim the tool cannot: `git cat-file -p <blob>`
-	// prints the deleted secret they can no longer see in their checkout. grokpatrol
-	// itself can never follow this pointer -- cat-file is not on the gitx allowlist --
-	// which is the invariant working exactly as designed, not a hole in it.
+	// uploaded set (under --full-secrets-search it may instead be the historical
+	// version whose contents actually matched). It is the strongest evidence in
+	// the report: `git cat-file -p <blob>` shows the USER the secret the report
+	// refuses to quote. A default run never follows this pointer at all, and a
+	// --full-secrets-search run only ever matches contents in memory -- the
+	// reader's own git is the only thing that prints the value.
 	Blob string `json:"blob,omitempty"`
 	// DeletedFromCheckout is the one that matters most: the file is gone from the
 	// working tree but still reachable in git history, so it was in the exfiltrated

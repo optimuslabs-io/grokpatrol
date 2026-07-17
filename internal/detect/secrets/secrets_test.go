@@ -108,9 +108,10 @@ func hitFor(st model.RepoStatus, path string) *model.SecretHit {
 // or to the wrong file -- is worse than printing none at all: it would discredit the
 // one claim in the report they can check for themselves.
 //
-// Note what this test does that grokpatrol cannot. It runs cat-file. The tool never
-// can: cat-file is absent from the gitx allowlist, which is precisely what lets it
-// hand over a verified pointer to a secret it is structurally unable to read.
+// Note what this test does that a DEFAULT grokpatrol run never does. It runs
+// `cat-file -p` and looks at the value. The tool only reads blobs under
+// --full-secrets-search, and even then the value never reaches the report --
+// the blob id is the user's pointer to evidence the report refuses to quote.
 func TestBlobIDResolvesToTheDeletedSecret(t *testing.T) {
 	repo := fixtureRepo(t)
 	st := runDetector(t, repo, true)
@@ -367,6 +368,196 @@ func TestDirectoryNamedLikeASecretIsNotFlagged(t *testing.T) {
 	// not the files under them.
 	if h := hitFor(st, "secrets/prod.env"); h == nil || !h.DeletedFromCheckout {
 		t.Errorf("the genuine deleted secret secrets/prod.env was lost by the tree filter: %+v", h)
+	}
+}
+
+// contentFixtureRepo extends the standard fixture with secrets that only a
+// CONTENT scan can see: credential values inside innocently-named files.
+func contentFixtureRepo(t *testing.T) string {
+	t.Helper()
+	dir := fixtureRepo(t)
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+		"GIT_AUTHOR_DATE=2026-01-02T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-02T00:00:00Z",
+	)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = dir, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(rel string, content []byte) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// An AWS key in a file whose NAME says nothing. Committed, then deleted:
+	// invisible to the checkout, invisible to filename matching, and exactly what
+	// --full-secrets-search exists to catch. (Invented key; not AWS's EXAMPLE
+	// suffix, which the corpus deliberately allowlists.)
+	write("config/database.yml", []byte("production:\n  aws_access_key_id: "+plantedAWSKey+"\n"))
+	// A GitHub PAT that is still in HEAD, in an innocently-named script. Bare
+	// assignment on purpose: a curl invocation would (correctly) also match the
+	// corpus's curl-auth-header rule, and this fixture pins github-pat.
+	write("tools/sync.sh", []byte("#!/bin/sh\nGH_PAT="+plantedGitHubPAT+"\n"))
+	// A binary file carrying the same AWS key after a NUL: content rules are
+	// text-oriented and must skip it, not regex byte soup.
+	write("assets/blob.dat", append([]byte{0x00, 0x01, 0x02}, []byte(plantedAWSKey)...))
+	run("add", "-A")
+	run("commit", "-q", "-m", "add innocules")
+	run("rm", "-q", "config/database.yml")
+	run("commit", "-q", "-m", "remove database.yml (it remains in history)")
+	return dir
+}
+
+// plantedAWSKey and plantedGitHubPAT are invented, credential-SHAPED test
+// values, split into fragments rather than spelled out as one literal.
+// GitHub's push-protection secret scanner pattern-matches file text on push
+// and cannot tell fake from real -- same reasoning as scan/markers.go's
+// reversed markers, applied here to test fixtures instead of shipped
+// indicators.
+const (
+	plantedAWSKey    = "AKIA" + "QYLPMN5HHHFPZAM2"
+	plantedGitHubPAT = "ghp_" + "x7Qm2KpL9vTzR4wNc8bYhJ3sD6fGa1eU5iOk"
+)
+
+func runDetectorFull(t *testing.T, repo string, useGit bool, maxBlob int64) (model.RepoStatus, engine.Result) {
+	t.Helper()
+	env := &engine.Env{
+		UseGit:            useGit,
+		HistoryScope:      "head",
+		MaxGitObjects:     1_000_000,
+		GitTimeout:        30 * time.Second,
+		ExtraRepos:        []string{repo},
+		FullSecretsSearch: true,
+		MaxBlobScanBytes:  maxBlob,
+	}
+	res, err := New().Run(context.Background(), env)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Repos) != 1 {
+		t.Fatalf("want 1 repo, got %d", len(res.Repos))
+	}
+	return res.Repos[0], res
+}
+
+// The capability the flag buys: a credential VALUE in an innocently-named
+// file, deleted from the checkout, still makes the rotation checklist -- with
+// the rule id naming which credential it is.
+func TestFullSecretsSearchFindsContentSecrets(t *testing.T) {
+	repo := contentFixtureRepo(t)
+	st, _ := runDetectorFull(t, repo, true, 0)
+
+	h := hitFor(st, "config/database.yml")
+	if h == nil {
+		t.Fatal("config/database.yml was NOT found: a deleted file whose name is innocent is invisible " +
+			"to filename matching, and finding it is the entire point of --full-secrets-search")
+	}
+	if h.Class != "aws-access-token" {
+		t.Errorf("config/database.yml Class = %q, want the rule id aws-access-token", h.Class)
+	}
+	if !h.DeletedFromCheckout || h.InHEAD {
+		t.Errorf("config/database.yml: DeletedFromCheckout=%v InHEAD=%v, want true/false", h.DeletedFromCheckout, h.InHEAD)
+	}
+	if h.Blob == "" {
+		t.Error("no blob id: the user has no pointer to verify a file they cannot see")
+	}
+
+	if h := hitFor(st, "tools/sync.sh"); h == nil || h.Class != "github-pat" || !h.InHEAD {
+		t.Errorf("tools/sync.sh: got %+v, want an in-HEAD github-pat hit", h)
+	}
+
+	// The filename floor keeps working underneath: .env.production has no
+	// content-rule match, but its name still convicts it.
+	if h := hitFor(st, ".env.production"); h == nil || !h.DeletedFromCheckout {
+		t.Errorf(".env.production lost by the content tier: %+v", h)
+	}
+
+	// Binary blobs are skipped, not regexed.
+	if h := hitFor(st, "assets/blob.dat"); h != nil {
+		t.Errorf("assets/blob.dat (binary) was reported: %+v", h)
+	}
+}
+
+// Without the flag, contents are never read and the innocently-named file
+// must NOT appear -- the default posture is unchanged.
+func TestContentSecretsInvisibleByDefault(t *testing.T) {
+	repo := contentFixtureRepo(t)
+	st := runDetector(t, repo, true)
+	if h := hitFor(st, "config/database.yml"); h != nil {
+		t.Errorf("config/database.yml reported on a default run: %+v -- the default scan must not read contents", h)
+	}
+	if h := hitFor(st, "tools/sync.sh"); h != nil {
+		t.Errorf("tools/sync.sh reported on a default run: %+v", h)
+	}
+}
+
+// Blobs over the cap are skipped LOUDLY: a limitation row, and the filename
+// floor still applies to everything.
+func TestOversizedBlobsDegradeHonestly(t *testing.T) {
+	repo := contentFixtureRepo(t)
+	st, res := runDetectorFull(t, repo, true, 8) // 8 bytes: everything is oversized
+
+	if h := hitFor(st, "config/database.yml"); h != nil {
+		t.Errorf("config/database.yml reported despite every blob exceeding the cap: %+v", h)
+	}
+	// The floor is intact.
+	if h := hitFor(st, ".env.production"); h == nil {
+		t.Error(".env.production (filename hit) lost when content scanning was capped out")
+	}
+	found := false
+	for _, l := range res.Limitations {
+		if strings.Contains(l, "max-blob-scan-bytes") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no limitation recorded for oversized blobs; silence is a clean bill of health the scan did not earn. got: %v", res.Limitations)
+	}
+}
+
+// The working-tree variant: no git, flag on -- contents of files on disk are
+// scanned, through hostfs, with the same rule table.
+func TestFullSecretsSearchWorksOnWorkingTree(t *testing.T) {
+	repo := contentFixtureRepo(t)
+	st, _ := runDetectorFull(t, repo, false, 0)
+
+	// tools/sync.sh is on disk with a PAT in it.
+	if h := hitFor(st, "tools/sync.sh"); h == nil || h.Class != "github-pat" {
+		t.Errorf("tools/sync.sh: got %+v, want github-pat from a working-tree content scan", h)
+	}
+	// config/database.yml is deleted from disk: without git it is unreachable,
+	// and the scan must still be marked incomplete.
+	if h := hitFor(st, "config/database.yml"); h != nil {
+		t.Errorf("config/database.yml reported without git: %+v", h)
+	}
+	if st.SecretsScanned {
+		t.Error("SecretsScanned must stay false for a working-tree-only scan, however deep")
+	}
+}
+
+// Whatever tier found a hit, no field anywhere in the result may carry the
+// planted values. This is the engine-level half of the leak guarantee; the
+// report-level half greps the rendered output channels.
+func TestContentScanResultCarriesNoValues(t *testing.T) {
+	repo := contentFixtureRepo(t)
+	st, res := runDetectorFull(t, repo, true, 0)
+
+	dump := fmt.Sprintf("%+v\n%+v", st, res)
+	for _, v := range []string{plantedAWSKey, plantedGitHubPAT, "hunter2"} {
+		if strings.Contains(dump, v) {
+			t.Errorf("a planted secret value appears in the detector result: %q", v)
+		}
 	}
 }
 

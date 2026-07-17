@@ -48,6 +48,9 @@ func run() int {
 		historyScope = flag.String("history-scope", "head", "git history to search for secrets: head | all | none")
 		noGit        = flag.Bool("no-git", false, "never invoke git; search only the working tree for secrets")
 
+		fullSecrets  = flag.Bool("full-secrets-search", false, "also scan file CONTENTS for secrets (gitleaks rule set); default matches filenames only and never reads a file")
+		maxBlobBytes = flag.Int64("max-blob-scan-bytes", 10<<20, "with --full-secrets-search, skip blobs larger than this many bytes")
+
 		concurrency = flag.Int("concurrency", defaultConcurrency(), "content-scan workers")
 		maxFileSize = flag.Int64("max-file-size", 512<<20, "skip files larger than this many bytes")
 		maxGitObj   = flag.Int("max-git-objects", 5_000_000, "cap on git objects enumerated per repository")
@@ -90,19 +93,21 @@ func run() int {
 	}
 
 	env := &engine.Env{
-		Home:            h,
-		GrokHome:        hostfs.GrokHome(*grokHome, h),
-		PathDirs:        filepath.SplitList(os.Getenv("PATH")),
-		ScanRoots:       scanRoot,
-		FollowSymlinks:  *followLinks,
-		CrossFilesystem: *crossFS,
-		Concurrency:     *concurrency,
-		MaxFileSize:     *maxFileSize,
-		UseGit:          !*noGit,
-		HistoryScope:    *historyScope,
-		MaxGitObjects:   *maxGitObj,
-		GitTimeout:      *gitTimeout,
-		ExtraRepos:      repos,
+		Home:              h,
+		GrokHome:          hostfs.GrokHome(*grokHome, h),
+		PathDirs:          filepath.SplitList(os.Getenv("PATH")),
+		ScanRoots:         scanRoot,
+		FollowSymlinks:    *followLinks,
+		CrossFilesystem:   *crossFS,
+		Concurrency:       *concurrency,
+		MaxFileSize:       *maxFileSize,
+		UseGit:            !*noGit,
+		HistoryScope:      *historyScope,
+		MaxGitObjects:     *maxGitObj,
+		GitTimeout:        *gitTimeout,
+		ExtraRepos:        repos,
+		FullSecretsSearch: *fullSecrets,
+		MaxBlobScanBytes:  *maxBlobBytes,
 	}
 
 	// Ctrl-C produces a partial report rather than nothing: on a machine you are
@@ -208,8 +213,10 @@ Answers three questions, entirely offline:
   2. How many times, and when?
   3. Which secrets went with them -- including files you deleted, which stayed in git history?
 
-It is read-only. It makes no network calls. It never executes the grok binary, and
-it never reads the contents of a secret: it reports filenames so you know what to rotate.
+It is read-only. It makes no network calls. It never executes the grok binary. By
+default it never reads the contents of a secret: it reports filenames so you know what
+to rotate. With --full-secrets-search it also matches file contents against the
+gitleaks rule set -- values are matched in memory, and still never stored or printed.
 
 As it runs, it prints each thing it is checking for, on stderr (--quiet silences it).
 The report goes to stdout, so "grokpatrol --json | jq" still works while you watch.

@@ -60,6 +60,7 @@ func (e *Engine) Run(ctx context.Context, env *Env) *model.Report {
 		Options: model.Options{
 			HistoryScope: env.HistoryScope, UseGit: env.UseGit,
 			Concurrency: env.Concurrency, MaxFileSize: env.MaxFileSize,
+			FullSecretsSearch: env.FullSecretsSearch, MaxBlobScanBytes: env.MaxBlobScanBytes,
 		},
 		Counts: map[string]int{},
 	}

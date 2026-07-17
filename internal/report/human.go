@@ -1514,8 +1514,15 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		return
 	}
 
-	fmt.Fprintln(w, s.c(bold, "CREDENTIAL PATHS")+
-		s.c(dim, "   (filenames and object ids only -- contents were never read by this tool)"))
+	// The subheader states the tier that actually ran. Both claims are load-
+	// bearing: the default one ("never read") is the tool's posture, and the
+	// --full-secrets-search one must not pretend otherwise -- contents WERE
+	// read, in memory, and what the reader gets is still only names and ids.
+	tier := "   (filenames and object ids only -- contents were never read by this tool)"
+	if rep.Options.FullSecretsSearch {
+		tier = "   (contents were scanned in memory against the gitleaks rule set -- values are never stored or printed)"
+	}
+	fmt.Fprintln(w, s.c(bold, "CREDENTIAL PATHS")+s.c(dim, tier))
 
 	// WITHOUT --verbose this is a COUNT, not the rotation list.
 	//
@@ -1606,14 +1613,19 @@ func secrets(w io.Writer, rep *model.Report, s Style) {
 		writeTable(w, "    ", secRows)
 	}
 
-	// The invitation, printed once. grokpatrol is telling the user how to read files
-	// it will not read itself -- and that is not a gap in the guarantee, it IS the
-	// guarantee: cat-file is absent from the gitx allowlist, so no code path in this
-	// tool can follow the pointer it just handed over. Their git can.
+	// The invitation, printed once. grokpatrol is telling the user how to look at
+	// evidence it refuses to quote. On a default run it never reads the blob at
+	// all; under --full-secrets-search it reads to match but the value still
+	// never reaches any output -- so in both tiers, the reader's own git is the
+	// only thing that will ever show them the secret.
 	if anyBlob(rep) {
 		fmt.Fprintf(w, "\n  %s\n", s.c(dim, "Every blob above is in your local git object store. To see what leaked:"))
 		fmt.Fprintf(w, "  %s\n", s.c(dim, "    git -C <repository> cat-file -p <blob>"))
-		fmt.Fprintf(w, "  %s\n", s.c(dim, "grokpatrol never runs that command: it cannot read a secret it reports."))
+		if rep.Options.FullSecretsSearch {
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "grokpatrol matched these contents in memory; it never prints a value it finds."))
+		} else {
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "grokpatrol never ran that command: this scan did not read any file contents."))
+		}
 	}
 	fmt.Fprintln(w)
 }

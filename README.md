@@ -170,9 +170,10 @@ prints on the same line as the path. That is the one claim in this report you ca
 git -C ~/work/payments-api cat-file -p d6da7879bc89     # the .env you deleted, still in history
 ```
 
-grokpatrol will never run that command. `cat-file` is not on its git allowlist, so it hands
-you a pointer to a file it is structurally incapable of reading — which is exactly why it can
-afford to hand it to you at all.
+grokpatrol never ran that command on this scan: a default run does not read file contents at
+all, so it hands you a pointer to a file it never opened. (With `--full-secrets-search` it
+reads blob contents in memory to match them against the gitleaks rule set — and still prints
+only the pointer, never the value.)
 
 ## Guarantees
 
@@ -190,13 +191,15 @@ These are enforced mechanically:
 - **The `grok` binary is never executed** — not even `grok --version`. It carries a
   collector that runs outside the permission system; launching it to ask a question could
   itself start a session. Version is inferred passively.
-- **Secret *values* are never read; secret *locations* always are.** The report prints the
+- **Secret *values* are never printed; secret *locations* always are.** The report prints the
   full path and git object id of every exposed credential file, because a rotation checklist
-  you cannot locate is useless. It never reads their contents: `git cat-file` is excluded from
-  the allowlist, so no code path exists that could read a blob. `model.Evidence` has no field
-  capable of holding file contents, which makes this structural rather than a promise — a line
-  *number* is evidence, a line's *text* never is. `~/.grok/auth.json` is checked for existence
-  and never opened.
+  you cannot locate is useless. A default run never reads their contents at all — it matches
+  filenames only. Opt-in `--full-secrets-search` reads implicated blobs and matches their
+  contents against the gitleaks rule set (222 rules, MIT-licensed, transcribed — still zero
+  dependencies), in transient memory: `model.Evidence` and `SecretHit` have no field capable
+  of holding file contents, and leak tests grep every output channel (stdout, stderr, `--json`)
+  for planted values. A line *number* is evidence, a line's *text* never is. `~/.grok/auth.json`
+  is checked for existence and never opened.
 - **Every positive finding cites something you can go and look at.** A queued archive is
   reported with its `gs://` destination and the log file and line Grok wrote when it queued it;
   a staged archive with its SHA-256; an exposed secret with its blob id. A verdict you have to
@@ -257,10 +260,12 @@ checkout is still in history and went out with it. grokpatrol flags those first:
 credentials you can no longer see in your own working tree before the rest.
 
 **Does grokpatrol read or transmit my secret values?**
-Never. It reports secret *locations* (path and git object id) so you know what to rotate, and is
-structurally incapable of reading their *contents*: `git cat-file` is off its allowlist and the
-evidence model has no field that can hold file contents. It makes no network calls at all — proven
-by the linker (`make verify-deps`), which asserts `net`/`net/http`/`crypto/tls` are not linked in.
+It never transmits or prints them. A default run never even reads them: it matches filenames
+only. With `--full-secrets-search` it reads implicated file contents in memory to match them
+against the gitleaks rule set, then reports only the location and rule id — the evidence model
+has no field that can hold file contents, and leak tests grep every output channel for planted
+values. It makes no network calls at all — proven by the linker (`make verify-deps`), which
+asserts `net`/`net/http`/`crypto/tls` are not linked in.
 
 **Is it safe to run on a possibly-compromised host?**
 That is the design target. grokpatrol is a single static binary, stdlib-only, offline, and
@@ -296,3 +301,8 @@ flag `.env.production` and `certs/prod.pem` as *deleted from checkout, still in 
 
 The fixture is generated rather than committed: files carrying a live IoC string trip
 corporate EDR, which is a real problem for anyone who clones this.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE). Secret-detection rules are transcribed from
+[gitleaks](https://github.com/gitleaks/gitleaks) (MIT) — see [NOTICE](NOTICE).
