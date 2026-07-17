@@ -103,8 +103,10 @@ These are mechanically enforced in the codebase, not aspirational:
 - **Read-only.** Every file open is `O_RDONLY` through one function; no write/create/rename/remove.
   A test proves `.git` is byte-for-byte identical after a scan.
 - **Never executes the `grok` binary** — not even `--version`. Version is inferred passively.
-- **Never reads or prints secret values.** It reports secret *locations* (path, git object id)
-  only; `git cat-file` is off its allowlist and the evidence model has no field for file contents.
+- **Never prints secret values.** It reports secret *locations* (path, git object id, rule id)
+  only; the evidence model has no field for file contents. A default run never reads file
+  contents at all; `--full-secrets-search` matches contents in memory (gitleaks rule set) and
+  still reports only locations — leak tests grep every output channel for planted values.
 - **A degraded scan never reports CLEAN**, so a blocked directory cannot be mistaken for a clean host.
 
 ## Do not

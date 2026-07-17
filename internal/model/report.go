@@ -47,6 +47,11 @@ type Options struct {
 	UseGit       bool   `json:"use_git"`
 	Concurrency  int    `json:"concurrency"`
 	MaxFileSize  int64  `json:"max_file_size"`
+	// FullSecretsSearch records whether file CONTENTS were scanned for secrets
+	// (--full-secrets-search). The report layer keys its honesty on this: the
+	// "contents were never read" claim is true only when it is false.
+	FullSecretsSearch bool  `json:"full_secrets_search"`
+	MaxBlobScanBytes  int64 `json:"max_blob_scan_bytes,omitempty"`
 }
 
 type Report struct {

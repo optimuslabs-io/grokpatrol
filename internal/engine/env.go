@@ -36,6 +36,20 @@ type Env struct {
 	MaxGitObjects int
 	GitTimeout    time.Duration
 
+	// FullSecretsSearch (--full-secrets-search) turns on content-based secret
+	// detection: implicated blobs are read via `git cat-file` and matched against
+	// the transcribed gitleaks rule table. Off by default -- the default scan
+	// classifies by FILENAME only and never reads a blob, which is the posture
+	// most users want from a forensic tool they just downloaded. Even when on,
+	// values are matched in transient buffers and never stored or printed;
+	// findings carry paths, rule ids, and object ids only.
+	FullSecretsSearch bool
+	// MaxBlobScanBytes caps how large a blob the content scan will read and
+	// regex (--max-blob-scan-bytes). Blobs over the cap are skipped and the skip
+	// is reported as a limitation -- an absence of information, never a clean
+	// bill of health.
+	MaxBlobScanBytes int64
+
 	ExtraRepos []string // --repo, forced into triage even if the logs never mention them
 	// SeedRepos are the repositories the log ledger implicated. The engine fills
 	// this between phases, which is why secrets runs last.

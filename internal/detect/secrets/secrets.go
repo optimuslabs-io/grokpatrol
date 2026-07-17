@@ -8,8 +8,15 @@
 // which is the category the user cannot see by looking at their own repo, and the
 // one the incident specifically shipped.
 //
-// Filenames are reported. Contents are never read: see gitx, whose allowlist has
-// no cat-file.
+// Detection has two tiers. The default matches FILENAMES only (patterns.go) and
+// never reads a file. --full-secrets-search additionally reads each implicated
+// blob (gitx cat-file, transient buffers) and matches its contents against the
+// transcribed gitleaks rule table (rules.go, rules_gen.go). In both tiers the
+// report carries paths, classes/rule ids and object ids -- never a value: no
+// model struct has a field that could hold one, and the leak tests grep every
+// output channel for planted secrets. The filename tier also stays on as the
+// floor under the content tier, because a deleted .env whose blob cannot be
+// fetched (or is too big to scan) must still make the rotation checklist.
 package secrets
 
 import (
@@ -82,7 +89,8 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 // what surfaces the deleted .env that the user cannot see in their own checkout.
 func (*Detector) Describe() string {
 	return "git rev-list --objects HEAD minus the working tree, per implicated repository " +
-		"(finds secrets deleted from the checkout but still in history)"
+		"(finds secrets deleted from the checkout but still in history); " +
+		"--full-secrets-search additionally matches blob contents against the gitleaks rule set"
 }
 
 func summarizeRepos(repos []model.RepoStatus) string {
@@ -163,7 +171,7 @@ func triage(ctx context.Context, env *engine.Env, repo string, useGit bool, res 
 	}
 
 	if !useGit || !st.IsGitRepo {
-		hits := scanWorkingTree(repo, res)
+		hits := scanWorkingTree(env, repo, res)
 		st.SecretFiles = hits
 		st.SecretsScanned = false // working tree only: this is NOT a full answer
 		if !st.IsGitRepo {
@@ -174,7 +182,7 @@ func triage(ctx context.Context, env *engine.Env, repo string, useGit bool, res 
 		return st
 	}
 
-	head, objects, histErr := historySet(ctx, env, repo)
+	head, objects, histErr := historySet(ctx, env, repo, res)
 	if histErr != nil {
 		if errors.Is(histErr, gitx.ErrDubiousOwnership) {
 			// Do NOT work around this by injecting safe.directory=*: that would disable a
@@ -186,7 +194,7 @@ func triage(ctx context.Context, env *engine.Env, repo string, useGit bool, res 
 		res.Errors = append(res.Errors, model.ScanError{
 			Detector: "secrets", Kind: "io", Path: repo, Message: histErr.Error(), Material: true,
 		})
-		st.SecretFiles = scanWorkingTree(repo, res)
+		st.SecretFiles = scanWorkingTree(env, repo, res)
 		st.SecretsScanned = false
 		return st
 	}
@@ -203,7 +211,7 @@ func triage(ctx context.Context, env *engine.Env, repo string, useGit bool, res 
 // It also returns how many objects that set held. That number is the uploaded
 // payload, counted -- "12,431 objects went out, 4 of them are credentials" says
 // something "your history was uploaded" cannot.
-func historySet(ctx context.Context, env *engine.Env, repo string) (hits []model.SecretHit, objects int, err error) {
+func historySet(ctx context.Context, env *engine.Env, repo string, res *engine.Result) (hits []model.SecretHit, objects int, err error) {
 	rev := "HEAD"
 	revArgs := []string{"rev-list", "--objects", rev}
 	if env.HistoryScope == "all" {
@@ -215,8 +223,14 @@ func historySet(ctx context.Context, env *engine.Env, repo string) (hits []model
 	// The blob id is kept, not discarded. rev-list prints it on every line and this
 	// loop was already splitting it off to reach the path; carrying it costs nothing
 	// and it is the only thing in the report a user can independently verify
-	// (`git cat-file -p <blob>` shows them the secret this tool refuses to read).
+	// (`git cat-file -p <blob>` shows them the secret this tool refuses to read on
+	// a default run).
 	history := map[string]string{}
+	// Under --full-secrets-search, every (sha, path) pair is also kept: the map
+	// above holds one version per path, but a rotated-out secret usually lives in
+	// an OLD version of a file that still exists, and only the full pair list can
+	// reach it.
+	var pairs []objRef
 	count := 0
 	truncated := false
 	err = gitx.Stream(ctx, repo, env.GitTimeout, revArgs, func(line string) error {
@@ -231,7 +245,11 @@ func historySet(ctx context.Context, env *engine.Env, repo string) (hits []model
 			return nil
 		}
 		if p := strings.TrimSpace(line[sp+1:]); p != "" {
-			history[p] = strings.TrimSpace(line[:sp])
+			sha := strings.TrimSpace(line[:sp])
+			history[p] = sha
+			if env.FullSecretsSearch {
+				pairs = append(pairs, objRef{sha: sha, path: p})
+			}
 		}
 		return nil
 	})
@@ -266,6 +284,21 @@ func historySet(ctx context.Context, env *engine.Env, repo string) (hits []model
 		}
 	}
 
+	// Under --full-secrets-search, fetch and match blob contents. This runs on
+	// the full pair list minus directory paths; failures inside degrade to the
+	// filename floor below and are recorded on res, never swallowed.
+	var contentHits map[string]contentHit
+	if env.FullSecretsSearch {
+		scannable := pairs[:0]
+		for _, pr := range pairs {
+			if !dirs[pr.path] {
+				scannable = append(scannable, pr)
+			}
+		}
+		contentHits = contentScanHistory(ctx, env, repo, scannable, res)
+	}
+
+	byPath := map[string]int{} // path -> index into hits, for the content merge
 	for p, blob := range history {
 		if dirs[p] {
 			continue // a directory object, not a file: never a secret to rotate
@@ -275,6 +308,7 @@ func historySet(ctx context.Context, env *engine.Env, repo string) (hits []model
 			continue
 		}
 		inHead := headSet[p]
+		byPath[p] = len(hits)
 		hits = append(hits, model.SecretHit{
 			Path:      p,
 			Class:     class,
@@ -283,6 +317,27 @@ func historySet(ctx context.Context, env *engine.Env, repo string) (hits []model
 			InHistory: true,
 			// The one that matters: present in the uploaded object set, absent from the
 			// checkout. The user cannot see this by looking at their own repo.
+			DeletedFromCheckout: !inHead,
+		})
+	}
+
+	// Merge: a content hit on an already-flagged path upgrades its class to the
+	// rule id (which credential it is beats which shape its name has) and points
+	// Blob at the version that actually matched; a content hit on a new path
+	// becomes its own row with the same InHEAD/deleted semantics.
+	for p, ch := range contentHits {
+		if i, ok := byPath[p]; ok {
+			hits[i].Class = ch.rule
+			hits[i].Blob = ch.blob
+			continue
+		}
+		inHead := headSet[p]
+		hits = append(hits, model.SecretHit{
+			Path:                p,
+			Class:               ch.rule,
+			Blob:                ch.blob,
+			InHEAD:              inHead,
+			InHistory:           true,
 			DeletedFromCheckout: !inHead,
 		})
 	}
@@ -307,9 +362,13 @@ func historySet(ctx context.Context, env *engine.Env, repo string) (hits []model
 
 var errStopEarly = errors.New("stop")
 
-// scanWorkingTree is the degraded path: no git, so only what is on disk right now.
-func scanWorkingTree(repo string, res *engine.Result) []model.SecretHit {
+// scanWorkingTree is the degraded path: no git, so only what is on disk right
+// now. Under --full-secrets-search it reads file contents too (through hostfs,
+// the only sanctioned filesystem door) -- still a working-tree-only answer,
+// but a deeper one.
+func scanWorkingTree(env *engine.Env, repo string, res *engine.Result) []model.SecretHit {
 	var hits []model.SecretHit
+	oversized, unreadable := 0, 0
 	_ = filepath.WalkDir(repo, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -324,11 +383,38 @@ func scanWorkingTree(repo string, res *engine.Result) []model.SecretHit {
 		if rerr != nil {
 			return nil
 		}
-		if class := Classify(rel); class != "" {
-			hits = append(hits, model.SecretHit{Path: filepath.ToSlash(rel), Class: class, InHEAD: true})
+		rel = filepath.ToSlash(rel)
+		class := Classify(rel)
+
+		if env.FullSecretsSearch {
+			if fi, serr := e.Info(); serr != nil || !fi.Mode().IsRegular() {
+				if serr != nil {
+					unreadable++
+				}
+			} else if fi.Size() > blobCap(env) {
+				oversized++
+			} else if rule, ok, cerr := contentScanFile(env, p, rel); cerr != nil {
+				unreadable++
+			} else if ok {
+				class = rule // the rule id names the credential; the filename only shapes it
+			}
+		}
+
+		if class != "" {
+			hits = append(hits, model.SecretHit{Path: rel, Class: class, InHEAD: true})
 		}
 		return nil
 	})
+	if oversized > 0 {
+		res.Limitations = append(res.Limitations, fmt.Sprintf(
+			"%s: %s exceeded --max-blob-scan-bytes and were not content-scanned; filename matching still applied.",
+			repo, engine.Plural(oversized, "file")))
+	}
+	if unreadable > 0 {
+		res.Limitations = append(res.Limitations, fmt.Sprintf(
+			"%s: %s could not be read for content scanning; filename matching still applied.",
+			repo, engine.Plural(unreadable, "file")))
+	}
 	sortHits(hits)
 	return hits
 }

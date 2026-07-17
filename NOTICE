@@ -10,3 +10,16 @@ You may obtain a copy of the License in the LICENSE file in this
 repository, or at:
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+---
+
+The secret-detection rules used by --full-secrets-search
+(internal/detect/secrets/rules_gen.go) are transcribed from the
+gitleaks project's default configuration:
+
+    gitleaks — https://github.com/gitleaks/gitleaks
+    Copyright (c) 2019 Zachary Rice
+    Used under the MIT License.
+
+The full MIT license text and the vendored rule corpus are in
+internal/detect/secrets/gitleaks/.

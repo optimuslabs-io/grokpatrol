@@ -92,12 +92,25 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_AUTHOR_DATE=2026-06-01T00:00:00Z GIT_COMMITTER_DATE=2026-06-01T00:00:00Z
 git init -q --initial-branch=main
+mkdir -p config tools
 echo 'package main' > src/main.go
 echo 'DATABASE_URL=postgres://user:hunter2@prod/db' > .env.production
 echo '-----BEGIN PRIVATE KEY-----' > certs/prod.pem
 echo 'DATABASE_URL=' > .env.example
+# Content-tier plants (invented values), invisible to filename matching: an AWS
+# key in an innocently-named config, deleted below, and a GitHub PAT that stays
+# in HEAD. Only `--full-secrets-search` finds these two.
+#
+# Built from adjacent quoted fragments (bash concatenates them) rather than one
+# literal: GitHub's push-protection secret scanner pattern-matches file text on
+# push and cannot tell fake from real, same reasoning as scan/markers.go's
+# reversed markers.
+AWS_KEY="AKIA""QYLPMN5HHHFPZAM2"
+GH_PAT="ghp_""x7Qm2KpL9vTzR4wNc8bYhJ3sD6fGa1eU5iOk"
+printf 'production:\n  aws_access_key_id: %s\n' "$AWS_KEY" > config/database.yml
+printf '#!/bin/sh\nGH_PAT=%s\n' "$GH_PAT" > tools/sync.sh
 git add -A >/dev/null && git commit -qm 'initial'
-git rm -q .env.production certs/prod.pem
+git rm -q .env.production certs/prod.pem config/database.yml
 git commit -qm 'remove secrets (they live on in git history)'
 echo 'api_token = "abc"' > terraform.tfvars
 git add -A >/dev/null && git commit -qm 'add tfvars'

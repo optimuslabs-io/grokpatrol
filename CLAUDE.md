@@ -31,12 +31,18 @@ No Make target for a single test — use `go test -run <Name> ./internal/<pkg>/`
 - **Read-only.** All host file reads go through `hostfs.OpenRead` (O_RDONLY). `hostfs` is the only
   package touching the filesystem, and never creates/writes/renames/removes.
 - **`gitx` is the only package that runs a subprocess**, allowlist `rev-list`, `ls-tree`,
-  `rev-parse`, `version` — no `cat-file`, so the tool has no way to read a blob's contents, which is
-  what makes "never prints secret values" structural. The `grok` binary itself is never executed.
-- **`model.Evidence` has no field that can hold file contents** — no `Excerpt`/`Content`/`Match`.
-  Every field is a location, a hash, or tool-authored prose; secret *locations* are reported, secret
-  *values* never are. `SecretHit.Blob` hands the user a pointer (`git cat-file -p <blob>`) that
-  grokpatrol itself cannot follow.
+  `rev-parse`, `version`, `cat-file`. `cat-file` is reachable only via the gitx batch API and is
+  invoked only under `--full-secrets-search`; a default run never reads a blob. The `grok` binary
+  itself is never executed.
+- **`model.Evidence` has no field that can hold file contents** — no `Excerpt`/`Content`/`Match` —
+  and neither does `SecretHit`. Every field is a location, a hash, or tool-authored prose; secret
+  *locations* are reported, secret *values* never are. This is the guarantee that used to be
+  enforced by cat-file's absence from the allowlist; it now lives here and in the leak tests
+  (`TestReportNeverPrintsASecretValue`, `TestFullSecretsSearchNeverLeaksValues`), which grep every
+  output channel — stdout, stderr, `--json`, the `%+v` of the whole report — for planted values.
+  Under `--full-secrets-search`, blob bytes exist only in transient scan buffers
+  (`internal/detect/secrets/rules.go` has the one-rule-of-this-file comment); matched bytes must
+  never be interpolated into ANY string — error, note, limitation, summary, or log.
 - **Markers are stored reversed, flipped at init** (`internal/scan/markers.go`). No non-test source
   file may contain a marker as a readable literal (test files may — that binary isn't shipped).
 - **A degraded scan never reports CLEAN.** A material `ScanError` sets `Report.Degraded`, forcing
@@ -98,6 +104,18 @@ delivery), not merely `exfil` (collection/queueing/staging → EXPOSED) or high 
 `detect/secrets`: uploaded set = every object reachable from HEAD (`git rev-list --objects HEAD`)
 minus the working tree (`git ls-tree HEAD`) = files deleted from checkout but still alive in
 history. Those sort first — the user can't find them by looking at their own repo.
+
+Secret detection has two tiers. Default: filename-only (`patterns.go` `Classify`), no file is ever
+read. Opt-in `--full-secrets-search`: blob contents are fetched (`gitx` cat-file batch, two-pass
+`--batch-check` then `--batch`, stall-based timeout) and matched against a stdlib port of
+gitleaks' engine (`rules.go`) running the transcribed gitleaks v8.30.1 corpus (`rules_gen.go`,
+generated — run `go generate ./internal/detect/secrets` after updating the vendored
+`gitleaks/gitleaks.toml`; MIT attribution in NOTICE and `gitleaks/LICENSE`). The filename tier
+stays on as the floor under the content tier: a deleted `.env` whose blob can't be fetched or is
+over `--max-blob-scan-bytes` still makes the checklist, and every skip is a limitation, never
+silence. Content hits carry the gitleaks rule id as `SecretHit.Class` and point `Blob` at the
+version that matched. Known fidelity gaps vs gitleaks (documented in `rules.go`): no base64/hex
+decode-then-rescan, substring keyword prefilter instead of Aho-Corasick.
 
 There is no `redact` package — hashing paths/session IDs traded away the one thing the report exists
 to tell the reader (which file, which repo). `report.Display` (home-relative path normalization) is

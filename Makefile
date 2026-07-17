@@ -138,6 +138,15 @@ demo: build
 	@$(DIST)/$(BIN) --home $(FAKEHOME) --grok-home $(FAKEHOME)/.grok; \
 	  echo "exit=$$?  (0 = the scan ran; the verdict above should read COMPROMISED)"
 
+## demo-full: the demo with --full-secrets-search (content matching finds the planted AWS key and PAT)
+.PHONY: demo-full
+demo-full: build
+	@./testdata/make_fakehome.sh $(FAKEHOME) >/dev/null
+	@echo "synthetic compromised host: $(FAKEHOME)"
+	@echo
+	@$(DIST)/$(BIN) --home $(FAKEHOME) --grok-home $(FAKEHOME)/.grok --full-secrets-search --verbose; \
+	  echo "exit=$$?  (0 = the scan ran; the verdict above should read COMPROMISED)"
+
 # --- cleanup -----------------------------------------------------------------
 
 # Release artifacts only. Deliberately does NOT remove ./dist/grokpatrol, so that

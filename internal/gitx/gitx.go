@@ -7,10 +7,18 @@
 //     so launching it to ask a question could itself start a session and trigger
 //     an upload. argv[0] below is the string literal "git" and nothing else.
 //
-//  2. Nothing this package runs can modify a repository or read a file's
-//     contents. The subcommand allowlist has no `cat-file`, so there is no code
-//     path by which grokpatrol could read a blob -- which is what makes "never
-//     prints secret values" a structural property rather than a promise.
+//  2. Nothing this package runs can modify a repository. Every allowlisted
+//     subcommand is read-only, and the extra -c flags below stop git itself
+//     from repacking or refreshing anything mid-forensics.
+//
+// A boundary that used to live here has moved. The allowlist historically had
+// no `cat-file`, which made "never prints secret values" structural: the tool
+// could not read a blob even by mistake. --full-secrets-search needs blob
+// contents to run content rules over them, so cat-file is now allowed -- and
+// the guarantee it enforced now lives one layer up: blob bytes exist only in
+// transient buffers handed to the secrets engine, no model struct can hold
+// them (model.Evidence has no content field), and the leak tests grep every
+// output channel for planted values. Default scans never invoke cat-file.
 package gitx
 
 import (
@@ -25,16 +33,21 @@ import (
 	"time"
 )
 
-// allowed subcommands. Every one is read-only, and together they are exactly
-// enough to answer "which files were in the object set that got uploaded".
+// allowed subcommands. Every one is read-only: together they answer "which
+// files were in the object set that got uploaded", and (only under
+// --full-secrets-search) "what is inside those blobs".
 //
-// cat-file is deliberately ABSENT. Filenames are all the rotation checklist
-// needs, and without cat-file the tool cannot read blob content even by mistake.
+// cat-file is the deliberate exception to the old "filenames only" posture: it
+// is reachable ONLY through the Batch functions below, which hand contents to
+// the secrets engine in transient buffers. Nothing that reads a blob may store
+// or print it -- that is enforced at the model layer (no content-capable
+// field) and by the leak tests, not here.
 var allowed = map[string]bool{
 	"rev-list":  true,
 	"ls-tree":   true,
 	"rev-parse": true,
 	"version":   true,
+	"cat-file":  true,
 }
 
 var (
