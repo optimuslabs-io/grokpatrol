@@ -489,6 +489,68 @@ func TestFullSecretsSearchFindsContentSecrets(t *testing.T) {
 	}
 }
 
+// TestParallelTriageIsDeterministic stresses the --concurrency fan-out: many
+// repos triaged by several workers must produce the SAME ordered report on every
+// run. The per-worker Result plus the in-target-order merge is what guarantees
+// that; run under -race to catch any regression that reaches for shared state.
+func TestParallelTriageIsDeterministic(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	// A mix of fixture shapes so the repos genuinely differ and their ordering
+	// matters. Eight repos, four workers: the semaphore is exercised, and any
+	// order-dependent merge bug has room to show.
+	var repos []string
+	for i := 0; i < 4; i++ {
+		repos = append(repos, contentFixtureRepo(t), fixtureRepo(t))
+	}
+	env := &engine.Env{
+		UseGit:            true,
+		HistoryScope:      "head",
+		MaxGitObjects:     1_000_000,
+		GitTimeout:        30 * time.Second,
+		ExtraRepos:        repos,
+		FullSecretsSearch: true,
+		MaxBlobScanBytes:  1 << 20,
+		Concurrency:       4,
+	}
+
+	snapshot := func() string {
+		res, err := New().Run(context.Background(), env)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if len(res.Repos) != len(repos) {
+			t.Fatalf("want %d repos, got %d", len(repos), len(res.Repos))
+		}
+		// targetsOf sorts by path, and the merge preserves that order regardless of
+		// which worker finished first; pin it so an out-of-order merge fails loudly.
+		if !sort.SliceIsSorted(res.Repos, func(i, j int) bool { return res.Repos[i].RepoPath < res.Repos[j].RepoPath }) {
+			t.Fatal("res.Repos is not sorted by path: the parallel merge lost its order")
+		}
+		var b strings.Builder
+		for _, r := range res.Repos {
+			fmt.Fprintf(&b, "%s scanned=%v\n", r.RepoPath, r.SecretsScanned)
+			for _, h := range r.SecretFiles {
+				fmt.Fprintf(&b, "  %s [%s] blob=%s del=%v head=%v\n", h.Path, h.Class, h.Blob, h.DeletedFromCheckout, h.InHEAD)
+			}
+		}
+		return b.String()
+	}
+
+	first := snapshot()
+	// The content fixture's innocently-named deleted secret only surfaces if a
+	// worker actually ran the full content scan -- proof the fan-out did the work.
+	if !strings.Contains(first, "config/database.yml") {
+		t.Fatalf("parallel content scan missed a known secret:\n%s", first)
+	}
+	for i := 0; i < 12; i++ {
+		if got := snapshot(); got != first {
+			t.Fatalf("run %d differs -- parallel triage is nondeterministic:\n--- first ---\n%s--- run %d ---\n%s", i, first, i, got)
+		}
+	}
+}
+
 // Without the flag, contents are never read and the innocently-named file
 // must NOT appear -- the default posture is unchanged.
 func TestContentSecretsInvisibleByDefault(t *testing.T) {

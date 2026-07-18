@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/gitx"
@@ -68,12 +69,50 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 				"checkout but still present in git history -- exactly what the collector uploaded -- were NOT examined.")
 	}
 
-	for _, repo := range targets {
+	// Triage repositories in parallel, bounded by --concurrency. An affected
+	// machine usually has many collected repos, and each triage is independent --
+	// its own git subprocesses (gitx is stateless per call) and its own file reads
+	// (hostfs is read-only), over an immutable compiled rule set. So this loop, not
+	// any single repo, is where the wall time lives once per-blob scanning is fast.
+	//
+	// Determinism is preserved exactly: every worker fills its OWN result slot and
+	// its OWN Result, and the two are merged back in target order below. The report
+	// is therefore byte-identical to a serial run -- the same rule the engine's
+	// phase-2 fan-out holds to, and the reason the merge is here and not in the
+	// goroutine.
+	repos := make([]model.RepoStatus, len(targets))
+	subs := make([]engine.Result, len(targets))
+	launched := make([]bool, len(targets))
+	workers := env.Concurrency
+	if workers < 1 {
+		workers = 1 // a hand-built Env (tests) may leave it zero: never spawn zero workers
+	}
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for i, repo := range targets {
 		if ctx.Err() != nil {
-			break
+			break // stop launching new work once cancelled; in-flight repos still finish
 		}
-		st := triage(ctx, env, repo, useGit, &res)
-		res.Repos = append(res.Repos, st)
+		launched[i] = true
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int, repo string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			// triage returns this repo's RepoStatus and accumulates any errors and
+			// limitations on its private Result; both are merged in order below.
+			repos[i] = triage(ctx, env, repo, useGit, &subs[i])
+		}(i, repo)
+	}
+	wg.Wait()
+
+	for i := range targets {
+		if !launched[i] {
+			continue // ctx was cancelled before this repo started
+		}
+		res.Errors = append(res.Errors, subs[i].Errors...)
+		res.Limitations = append(res.Limitations, subs[i].Limitations...)
+		res.Repos = append(res.Repos, repos[i])
 	}
 
 	res.Findings = findings(res.Repos)

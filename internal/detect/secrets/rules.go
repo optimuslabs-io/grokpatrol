@@ -3,11 +3,11 @@
 // The engine is a stdlib-only port of gitleaks' detection flow (keyword
 // prefilter -> regex -> entropy gate -> allowlists); the rule table it runs is
 // generated from gitleaks' MIT-licensed corpus (see rules_gen.go and
-// gitleaks/LICENSE). Two deliberate simplifications, documented fidelity gaps
-// against upstream: no base64/hex decode-then-rescan pass, and the Aho-Corasick
-// keyword prefilter is a plain substring sweep (identical answers, slower --
-// fine at per-repo blob volumes, and blobs are already capped by
-// --max-blob-scan-bytes).
+// gitleaks/LICENSE). The keyword prefilter is a single Aho-Corasick pass over
+// each blob (ahocorasick.go), matching upstream's approach; it once shipped as
+// one substring sweep per keyword, which profiling showed was the entire cost of
+// a content scan. One deliberate simplification remains, a documented fidelity
+// gap against upstream: no base64/hex decode-then-rescan pass.
 //
 // THE ONE RULE OF THIS FILE: matched bytes never leave it. Not in a return
 // value, not in an error, not in a note or progress string. Until this engine
@@ -54,18 +54,18 @@ type allowList struct {
 type ruleSet struct {
 	rules    []compiledRule
 	global   compiledAllow
-	keywords []string // every distinct lowercased keyword across all rules
-	maxKwLen int
+	keywords []string   // every distinct lowercased keyword across all rules; index == keyword id
+	ac       *acMatcher // single-pass prefilter over keywords, built once
 }
 
 type compiledRule struct {
-	id       string
-	re       *regexp.Regexp // nil for the one path-only rule (pkcs12-file)
-	pathRE   *regexp.Regexp
-	entropy  float64
-	group    int
-	keywords []string // lowercased; empty means "always run the regex"
-	allow    []compiledAllow
+	id         string
+	re         *regexp.Regexp // nil for the one path-only rule (pkcs12-file)
+	pathRE     *regexp.Regexp
+	entropy    float64
+	group      int
+	keywordIDs []int // indices into ruleSet.keywords; empty means "always run the regex"
+	allow      []compiledAllow
 }
 
 type compiledAllow struct {
@@ -97,7 +97,7 @@ func compileRules(rules []contentRule, global allowList) (*ruleSet, error) {
 		return nil, fmt.Errorf("global allowlist: %w", err)
 	}
 
-	seenKw := map[string]bool{}
+	kwID := map[string]int{} // distinct lowercased keyword -> id (index into rs.keywords)
 	for _, r := range rules {
 		cr := compiledRule{id: r.ID, entropy: r.Entropy, group: r.SecretGroup}
 		if r.Regex != "" {
@@ -110,16 +110,26 @@ func compileRules(rules []contentRule, global allowList) (*ruleSet, error) {
 				return nil, fmt.Errorf("rule %s path: %w", r.ID, err)
 			}
 		}
+		hasEmptyKw := false
 		for _, kw := range r.Keywords {
 			kw = strings.ToLower(kw)
-			cr.keywords = append(cr.keywords, kw)
-			if !seenKw[kw] {
-				seenKw[kw] = true
-				rs.keywords = append(rs.keywords, kw)
-				if len(kw) > rs.maxKwLen {
-					rs.maxKwLen = len(kw)
-				}
+			if kw == "" {
+				// strings.Contains(x, "") is always true, so an empty keyword is no
+				// gate at all. Record it so the id list is cleared below, rather than
+				// feeding the automaton a pattern that would match at every position.
+				hasEmptyKw = true
+				continue
 			}
+			id, ok := kwID[kw]
+			if !ok {
+				id = len(rs.keywords)
+				kwID[kw] = id
+				rs.keywords = append(rs.keywords, kw)
+			}
+			cr.keywordIDs = append(cr.keywordIDs, id)
+		}
+		if hasEmptyKw {
+			cr.keywordIDs = nil // an empty keyword means "always run", matching the old sweep
 		}
 		for _, a := range r.Allow {
 			ca, aerr := compileAllow(a)
@@ -130,6 +140,7 @@ func compileRules(rules []contentRule, global allowList) (*ruleSet, error) {
 		}
 		rs.rules = append(rs.rules, cr)
 	}
+	rs.ac = buildAC(rs.keywords)
 	return rs, nil
 }
 
@@ -174,13 +185,12 @@ func (rs *ruleSet) scan(path string, data []byte) []string {
 	lower := strings.ToLower(text)
 
 	// Keyword presence for the whole buffer, computed once and shared by every
-	// rule that lists the keyword (upstream uses Aho-Corasick for this).
-	present := map[string]bool{}
-	for _, kw := range rs.keywords {
-		if strings.Contains(lower, kw) {
-			present[kw] = true
-		}
-	}
+	// rule that lists the keyword. A single Aho-Corasick pass (ahocorasick.go)
+	// replaces what used to be one substring sweep per keyword -- ~244 passes
+	// over every blob, which profiling showed WAS the cost of a content scan.
+	// present is indexed by keyword id.
+	present := make([]bool, len(rs.keywords))
+	rs.ac.collect(lower, present)
 
 	var ids []string
 	for i := range rs.rules {
@@ -195,7 +205,7 @@ func (rs *ruleSet) scan(path string, data []byte) []string {
 			}
 			continue
 		}
-		if len(r.keywords) > 0 && !anyPresent(present, r.keywords) {
+		if len(r.keywordIDs) > 0 && !anyPresentID(present, r.keywordIDs) {
 			continue
 		}
 		if rs.ruleHits(r, path, text, lower) {
@@ -205,9 +215,9 @@ func (rs *ruleSet) scan(path string, data []byte) []string {
 	return ids
 }
 
-func anyPresent(present map[string]bool, kws []string) bool {
-	for _, kw := range kws {
-		if present[kw] {
+func anyPresentID(present []bool, ids []int) bool {
+	for _, id := range ids {
+		if present[id] {
 			return true
 		}
 	}
