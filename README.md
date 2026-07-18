@@ -6,20 +6,21 @@
 [![Go](https://img.shields.io/github/go-mod/go-version/optimuslabs-io/grokpatrol)](go.mod)
 ![Dependencies: zero](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![Provenance: sigstore](https://img.shields.io/badge/provenance-sigstore-blue)
+[![Go Reference](https://pkg.go.dev/badge/github.com/optimuslabs-io/grokpatrol.svg)](https://pkg.go.dev/github.com/optimuslabs-io/grokpatrol)
+![Platforms: macOS · Linux](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux-informational)
 
 Detects, on your machine, whether the **Grok Build CLI** collected and queued your
 git repositories for upload to xAI — and tells you **which secrets went with them**.
 
-<!-- Demo GIF goes here. Generate with `vhs demo.tape` (charmbracelet/vhs) in a throwaway
-     VM or container -- `make demo` writes live indicator strings that can trip corporate EDR --
-     then commit docs/demo.gif and uncomment the line below.
-![grokpatrol scanning a compromised host](docs/demo.gif)
--->
+![grokpatrol scanning a synthetic compromised host: the animated banner, six checks, then VERDICT: COMPROMISED — with the two secrets deleted from the checkout but still alive in git history flagged for rotation](docs/demo.gif)
+
+<!-- Regenerate with `vhs demo.tape` (charmbracelet/vhs) in a throwaway VM or container:
+     `make demo` plants live indicator strings that can trip corporate EDR. -->
 
 > **Live incident.** The Grok Build CLI was found silently uploading whole git repositories to
 > xAI. If you have run it, the question is not whether it *could* — it's what left your disk.
 
-The Grok Build CLI was found to silently upload entire git repositories to the Google Cloud Storage. The upload was performed by a background collector that ran **outside the tool-call permission system**, so it fired even in sessions where the model was denied file access. What it shipped:
+The Grok Build CLI was found to silently upload entire git repositories to Google Cloud Storage. The upload was performed by a background collector that ran **outside the tool-call permission system**, so it fired even in sessions where the model was denied file access. What it shipped:
 
 - every tracked file at git HEAD,
 - every git object reachable from HEAD,
@@ -62,10 +63,14 @@ Grab the binary for your platform plus `SHA256SUMS` from the
 shasum -a 256 -c --ignore-missing SHA256SUMS      # sha256sum on Linux
 
 # Prove the binary was built by this repo's release workflow (sigstore):
-gh attestation verify grokpatrol_v0.1.0_darwin_arm64 -R optimuslabs-io/grokpatrol
+gh attestation verify grokpatrol_v0.1.16_darwin_arm64 -R optimuslabs-io/grokpatrol
 
-chmod +x grokpatrol_v0.1.0_darwin_arm64 && mv grokpatrol_v0.1.0_darwin_arm64 /usr/local/bin/grokpatrol
+chmod +x grokpatrol_v0.1.16_darwin_arm64 && mv grokpatrol_v0.1.16_darwin_arm64 /usr/local/bin/grokpatrol
 ```
+
+Replace the tag and platform to match what you downloaded — `<os>` ∈ `{darwin, linux}`,
+`<arch>` ∈ `{amd64, arm64}`. [AGENTS.md](AGENTS.md) has a copy-paste snippet that resolves the
+latest tag and asset name for you, no hardcoding.
 
 The checksum proves the download arrived intact. The attestation proves something
 stronger: the binary was built from this repository's source by its release workflow,
@@ -87,13 +92,17 @@ what it is, with pointers to everything it withholds.
 `--verbose` lists every `gs://` destination, every secret file by name and blob id, and all evidence rows.
 `--json` is the complete forensic record for fleet collection or automated tools.
 
+For the full flag list — including `--full-secrets-search` (match secret *contents* against the
+gitleaks rule set, not just filenames), `--history-scope`, and repeatable `--scan-root` — run
+`grokpatrol --help`.
+
 ### Watch it work
 
 The report itself goes to stdout, so `grokpatrol --json | jq` still works while you
 watch. `--quiet` silences it.
 
 ```
-grokpatrol 0.1.0 scanning /Users/you
+grokpatrol v0.1.16 scanning /Users/you
 
   → deepscan  walking the filesystem for grok homes, upload queues, staged archives, and executables carrying the bucket name
     ✓ deepscan  1 executable carrying the bucket name, 1 upload queue, 2 staged archives (28ms)
@@ -157,7 +166,7 @@ for scripting) for that.
 The secrets section is the one that matters most. The exfiltrated set was *"every git object
 reachable from HEAD"*, which is precisely what `git rev-list --objects HEAD` enumerates.
 Subtracting the current checkout from it yields the files that are **gone from your working
-tree but still alive in history** — the deleted `.env`, the rotated-out `.pem`. 
+tree but still alive in history** — the deleted `.env`, the rotated-out `.pem`.
 
 **In default mode**, the report shows you the count of secrets and specifically flags how many are
 deleted from your checkout (the ones you cannot find by looking) — because those are the priority:
@@ -301,6 +310,12 @@ flag `.env.production` and `certs/prod.pem` as *deleted from checkout, still in 
 
 The fixture is generated rather than committed: files carrying a live IoC string trip
 corporate EDR, which is a real problem for anyone who clones this.
+
+## Contributing & security
+
+Contributions welcome — [CONTRIBUTING.md](CONTRIBUTING.md) explains the invariants this tool holds
+itself to (no network, read-only, stdlib-only) and how to work within them. Found a security issue?
+Please report it privately via [SECURITY.md](SECURITY.md), not a public issue.
 
 ## License
 
