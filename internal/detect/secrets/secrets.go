@@ -91,9 +91,6 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	var wg sync.WaitGroup
 launchLoop:
 	for i, repo := range targets {
-		if ctx.Err() != nil {
-			break // stop launching new work once cancelled; in-flight repos still finish
-		}
 		select {
 		case sem <- struct{}{}:
 			launched[i] = true
