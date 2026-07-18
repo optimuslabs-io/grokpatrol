@@ -89,12 +89,17 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	}
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
+launchLoop:
 	for i, repo := range targets {
 		if ctx.Err() != nil {
 			break // stop launching new work once cancelled; in-flight repos still finish
 		}
-		launched[i] = true
-		sem <- struct{}{}
+		select {
+		case sem <- struct{}{}:
+			launched[i] = true
+		case <-ctx.Done():
+			break launchLoop // stop launching new work once cancelled; in-flight repos still finish
+		}
 		wg.Add(1)
 		go func(i int, repo string) {
 			defer wg.Done()
