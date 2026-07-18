@@ -63,14 +63,14 @@ Grab the binary for your platform plus `SHA256SUMS` from the
 shasum -a 256 -c --ignore-missing SHA256SUMS      # sha256sum on Linux
 
 # Prove the binary was built by this repo's release workflow (sigstore):
-gh attestation verify grokpatrol_v0.1.16_darwin_arm64 -R optimuslabs-io/grokpatrol
+gh attestation verify grokpatrol_<tag>_<os>_<arch> -R optimuslabs-io/grokpatrol
 
-chmod +x grokpatrol_v0.1.16_darwin_arm64 && mv grokpatrol_v0.1.16_darwin_arm64 /usr/local/bin/grokpatrol
+chmod +x grokpatrol_<tag>_<os>_<arch> && mv grokpatrol_<tag>_<os>_<arch> /usr/local/bin/grokpatrol
 ```
 
-Replace the tag and platform to match what you downloaded — `<os>` ∈ `{darwin, linux}`,
-`<arch>` ∈ `{amd64, arm64}`. [AGENTS.md](AGENTS.md) has a copy-paste snippet that resolves the
-latest tag and asset name for you, no hardcoding.
+`<tag>` looks like `v0.1.16`; `<os>` ∈ `{darwin, linux}`, `<arch>` ∈ `{amd64, arm64}`.
+[AGENTS.md](AGENTS.md) has a copy-paste snippet that resolves the latest tag and asset name
+for you, no hardcoding.
 
 The checksum proves the download arrived intact. The attestation proves something
 stronger: the binary was built from this repository's source by its release workflow,
@@ -102,7 +102,7 @@ The report itself goes to stdout, so `grokpatrol --json | jq` still works while 
 watch. `--quiet` silences it.
 
 ```
-grokpatrol v0.1.16 scanning /Users/you
+grokpatrol scanning /Users/you
 
   → deepscan  walking the filesystem for grok homes, upload queues, staged archives, and executables carrying the bucket name
     ✓ deepscan  1 executable carrying the bucket name, 1 upload queue, 2 staged archives (28ms)
