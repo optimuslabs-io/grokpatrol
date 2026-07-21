@@ -51,7 +51,7 @@ func run() int {
 		fullSecrets  = flag.Bool("full-secrets-search", false, "also scan file CONTENTS for secrets (gitleaks rule set); default matches filenames only and never reads a file")
 		maxBlobBytes = flag.Int64("max-blob-scan-bytes", 10<<20, "with --full-secrets-search, skip blobs larger than this many bytes")
 
-		concurrency = flag.Int("concurrency", defaultConcurrency(), "content-scan workers")
+		concurrency = flag.Int("concurrency", defaultConcurrency(), "repositories triaged in parallel")
 		maxFileSize = flag.Int64("max-file-size", 512<<20, "skip files larger than this many bytes")
 		maxGitObj   = flag.Int("max-git-objects", 5_000_000, "cap on git objects enumerated per repository")
 		timeout     = flag.Duration("timeout", 30*time.Minute, "global deadline")
