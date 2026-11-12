@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/model"
@@ -17,3 +18,7 @@ func registerOnlineFlags() {}
 func configureOnline(*engine.Env) error { return nil }
 
 func runOnline(context.Context, *engine.Env, *model.Report, engine.Progress) {}
+
+func watchMode() bool { return false }
+
+func runWatch(context.Context, *engine.Env, time.Duration) int { return 0 }

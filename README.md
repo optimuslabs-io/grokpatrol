@@ -285,6 +285,41 @@ from another host or kept behind sign-in are not seen.
 ./dist/grokpatrol-online --discover --org-domain acme.com --scan-public
 ```
 
+#### Alerts when an app goes public (`--watch`)
+
+grokpatrol cannot warn before a publish: Grok Build publishes from grok.com, in the browser,
+where nothing on your machine can intercept it. What it can do is tell you within minutes
+afterwards. `grokpatrol-online --watch <file>` is a light run: it looks only for grok.me addresses
+on this machine (no repository scan), plus public name lists if you pass `--discover` with org
+keywords. It compares what it finds with the previous record in `<file>`, checks the apps that are
+due, and prints the next record with an alert for each app that newly opens without sign-in (or
+newly serves a server secret, with `--scan-public`). The first run sends one summary instead.
+
+| App first seen | Checked |
+|---|---|
+| on this run | now |
+| in the last day | every run |
+| in the last week | hourly |
+| earlier | daily |
+
+The file is only read; grokpatrol stays read-only. The plugin's
+`plugin/skills/grokpatrol-apps/scripts/watch-apps.sh` saves the record, shows a desktop
+notification, and schedules the runs:
+
+```sh
+# Prints the plan; nothing changes until you add --apply.
+plugin/skills/grokpatrol-apps/scripts/watch-apps.sh install --keyword acmepay
+plugin/skills/grokpatrol-apps/scripts/watch-apps.sh install --keyword acmepay --apply
+plugin/skills/grokpatrol-apps/scripts/watch-apps.sh status
+plugin/skills/grokpatrol-apps/scripts/watch-apps.sh uninstall --apply
+```
+
+On macOS it installs a launchd agent that runs every 15 minutes (`--interval` to change it);
+elsewhere it prints a crontab line for you to add. With keywords or domains it asks crt.sh and
+urlscan.io every 6 hours, not every run. The record and log live in `~/.grokpatrol/watch`; API keys
+are not written into the schedule. A background run cannot read Safari's history on macOS, which
+needs Full Disk Access; Chrome, Edge, Brave, Arc and Firefox are read as usual.
+
 ### Free public sources (`--discover`, `--grok-search`)
 
 The apps a laptop never opened still leave public traces. `--discover` lists grok.me names from
@@ -369,6 +404,8 @@ your own `~/.grok/config.toml`. Set both mitigations (see MITIGATIONS in the rep
 the plugin there.
 
 Then ask the agent, for example: "Find Grok Build apps for acme.com and tell me which are public."
+It can also set up the watch above ("alert me when one of our apps goes public"); it shows you the
+plan before installing anything.
 
 ## Two things worth knowing
 
@@ -450,7 +487,7 @@ verdict from the report, not the exit status: `grokpatrol --json | jq -r .verdic
 | `make demo` | build a synthetic compromised host and scan it — expect COMPROMISED |
 | `make check` | what CI runs: deps + fmt + vet + race tests + cross-compile smoke |
 | `make verify-deps` | prove the binary is stdlib-only, with no network and no cgo |
-| `make build-online` | build `./dist/grokpatrol-online`, which adds `--check-exposure`, `--scan-public` and the public sources |
+| `make build-online` | build `./dist/grokpatrol-online`, which adds `--check-exposure`, `--scan-public`, `--watch` and the public sources |
 | `make verify-online-deps` | prove the online build is stdlib-only with no cgo |
 | `make plugin-check` | check the Claude, Cursor and Grok plugin manifests parse and agree on version |
 | `make test` / `fuzz` / `bench` | race tests, fuzz the log parser, benchmark the scanner |

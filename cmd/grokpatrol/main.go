@@ -128,6 +128,9 @@ func run() int {
 	defer cancel()
 	ctx, cancelTimeout := context.WithTimeout(ctx, *timeout)
 	defer cancelTimeout()
+	if watchMode() {
+		return runWatch(ctx, env, *detTimeout)
+	}
 
 	// The scan narrates itself on stderr, so a run that takes a minute on a large
 	// disk is not a blank screen -- and so that the list of things being checked is
