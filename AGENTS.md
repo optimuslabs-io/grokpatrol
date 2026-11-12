@@ -65,10 +65,10 @@ grokpatrol --version     # print version and exit
   `--color never`. Full list: `grokpatrol --help`.
 - It runs entirely offline and makes no network calls. Do not expect or require network egress.
 - `--json` also carries `published_apps`: Grok Build app addresses (`*.grok.me`) seen in browser
-  history, Grok CLI sessions and shell history. They do not affect the verdict, and an address seen
-  here may be somebody else's app. Each entry's `exposure` is empty unless the separate
-  `grokpatrol-online` build ran with `--check-exposure`, which makes one unauthenticated request per
-  app and sets `public`, `app_sign_in`, `restricted`, `not_found` or `unknown`. Only run that build
+  history, Grok CLI sessions, Grok's clipboard backup and shell history. They do not affect the
+  verdict, and an address seen here may be somebody else's app. Each entry's `exposure` is empty
+  unless the separate `grokpatrol-online` build ran with `--check-exposure`, which makes one
+  unauthenticated request per app and sets `public`, `app_sign_in`, `restricted`, `not_found` or `unknown`. Only run that build
   when the user asks to check whether their apps are open; it makes network requests.
 - `grokpatrol-online --scan-public` also fetches up to 8 same-host scripts from each `public` app and
   scans them in memory. Each app then has `secrets` (`rule`, `kind` `server` or `browser`, `asset`

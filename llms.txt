@@ -12,7 +12,7 @@ Confirmed-affected build: 0.2.93. Reported present through at least 0.2.99. Dete
 through the latest observed, 1.0.77 (grokver.LatestObserved); a newer build is flagged as
 unchecked. macOS and Linux, amd64 and arm64.
 
-Also lists Grok Build app addresses (*.grok.me) seen in browser history, Grok CLI sessions and shell history; a separate
+Also lists Grok Build app addresses (*.grok.me) seen in browser history, Grok CLI sessions, Grok's clipboard backup and shell history; a separate
 grokpatrol-online build adds --check-exposure (one unauthenticated request per app: public / app_sign_in / restricted / not_found / unknown),
 --scan-public (scans public apps' home page and same-host scripts in memory for keys; records rule id, kind and path, never the value)
 and --discover (free: crt.sh, urlscan.io, AlienVault OTX with a free key), --grok-search (xAI web/X search, $XAI_API_KEY) and

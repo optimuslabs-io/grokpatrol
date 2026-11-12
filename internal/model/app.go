@@ -3,7 +3,7 @@ package model
 import "time"
 
 // PublishedApp is a Grok Build app address (<name>.grok.me) found in a file on this
-// host: browser history, a Grok CLI session, shell history.
+// host: browser history, a Grok CLI session, Grok's clipboard backup, shell history.
 //
 // Host is the one file-derived string in the report that is not a path, and it is
 // allowed for the same reason the gs:// destinations in Evidence.Locator are: it is

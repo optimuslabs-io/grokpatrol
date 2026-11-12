@@ -233,7 +233,8 @@ pattern: in November 2026 [Claroc](https://blog.claroc.io/ghostshares-grok-build
 
 The apps live in xAI's cloud, so the only trace on a laptop is the address itself. grokpatrol
 looks for it in browser history (Chrome, Chromium, Brave, Edge, Arc, Firefox, Safari), Grok CLI
-sessions and shell history, and lists what it finds under **GROK.ME APPS**. Two caveats:
+sessions, Grok's clipboard backup (`~/.grok/last-copy.txt`, or wherever `GROK_COPY_FILE` points)
+and shell history, and lists what it finds under **GROK.ME APPS**. Two caveats:
 
 - **Seen here is not the same as yours.** Browser history records every app someone opened,
   including other people's. Apps never opened on this machine leave no trace at all.
