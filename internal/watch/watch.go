@@ -126,7 +126,7 @@ func Load(b []byte) (prev map[string]Entry, dropped int, err error) {
 		Apps   []Entry `json:"apps"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
-		return nil, 0, fmt.Errorf("previous watch record does not parse: %w", err)
+		return nil, 0, errors.New("previous watch record does not parse")
 	}
 	if r.Schema != Schema {
 		return nil, 0, ErrSchema
@@ -201,7 +201,11 @@ func plain(s string) string {
 // sighting, which keeps it eligible for the secret scan as it was before.
 func Carry(rep *model.Report, prev map[string]Entry) {
 	found := map[string]bool{}
-	for _, a := range rep.Apps {
+	for i := range rep.Apps {
+		a := &rep.Apps[i]
+		if e, ok := prev[a.Host]; ok && e.OnThisMachine && len(a.Seen) == 0 {
+			a.Seen = []model.Evidence{{Note: "seen on this machine in an earlier watch run"}}
+		}
 		found[a.Host] = true
 	}
 	hosts := make([]string, 0, len(prev))
@@ -236,6 +240,22 @@ func Due(host string, prev map[string]Entry, now time.Time) bool {
 	default:
 		return since >= 24*time.Hour
 	}
+}
+
+// Prioritize puts apps that have never had a successful check first, then the
+// least-recently checked apps, so per-run exposure limits do not starve the tail.
+func Prioritize(found []model.PublishedApp, prev map[string]Entry) {
+	sort.SliceStable(found, func(i, j int) bool {
+		a, aok := prev[found[i].Host]
+		b, bok := prev[found[j].Host]
+		if (aok && a.CheckedAt != nil) != (bok && b.CheckedAt != nil) {
+			return !(aok && a.CheckedAt != nil)
+		}
+		if aok && bok && a.CheckedAt != nil && b.CheckedAt != nil && !a.CheckedAt.Equal(*b.CheckedAt) {
+			return a.CheckedAt.Before(*b.CheckedAt)
+		}
+		return found[i].Host < found[j].Host
+	})
 }
 
 // ScanDue reports whether a due app should also get the secret scan on this run:
@@ -292,10 +312,11 @@ func Build(now time.Time, found []model.PublishedApp, checked map[string]bool, p
 				}
 				e.ExposureNote = "latest check failed: " + a.ExposureNote
 			}
-			if a.SecretScan != "" {
-				fresh := newServerRules(e.Secrets, a.Secrets)
+			if len(a.SecretScanAssets) > 0 {
+				secrets := mergeScannedSecrets(e.Secrets, a.Secrets, a.SecretScanAssets)
+				fresh := newServerRules(e.Secrets, secrets)
 				at := now
-				e.Secrets, e.SecretScan, e.SecretsCheckedAt = a.Secrets, a.SecretScan, &at
+				e.Secrets, e.SecretScan, e.SecretsCheckedAt = secrets, a.SecretScan, &at
 				if len(fresh) > 0 && !first {
 					secretAlerts = append(secretAlerts, Alert{
 						Kind: AlertSecret, Host: e.Host, Title: "Public grok.me app serves a secret",
@@ -359,34 +380,80 @@ func newServerRules(before, now []model.AppSecret) []string {
 	return out
 }
 
+func mergeScannedSecrets(before, now []model.AppSecret, scanned []string) []model.AppSecret {
+	covered := make(map[string]bool, len(scanned))
+	for _, asset := range scanned {
+		covered[asset] = true
+	}
+	seen := make(map[model.AppSecret]bool, len(before)+len(now))
+	var out []model.AppSecret
+	for _, s := range before {
+		if !covered[s.Asset] && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, s := range now {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func summary(entries []Entry) Alert {
 	a := Alert{Kind: AlertSummary, Title: "grokpatrol is watching grok.me apps"}
 	if len(entries) == 0 {
 		a.Message = "No grok.me app found yet. You will get an alert when one appears and opens without sign-in."
 		return a
 	}
-	var public []string
+	var public, secrets []string
+	unknown := 0
 	for _, e := range entries {
 		if e.PublicSince != nil {
 			public = append(public, e.Host)
+		} else if e.Exposure == "" || e.Exposure == model.ExposureUnknown {
+			unknown++
+		}
+		rules := newServerRules(nil, e.Secrets)
+		if len(rules) > 0 {
+			secrets = append(secrets, e.Host+" ("+strings.Join(rules, ", ")+")")
 		}
 	}
 	a.Message = "Watching " + engine.Plural(len(entries), "app") + ". "
 	if len(public) == 0 {
-		return Alert{Kind: a.Kind, Title: a.Title, Message: a.Message + "None opens without sign-in."}
+		if unknown > 0 {
+			a.Message += fmt.Sprintf("No app was confirmed open without sign-in; %d %s could not be checked successfully.",
+				unknown, engine.Plural(unknown, "app"))
+		} else {
+			a.Message += "None opens without sign-in."
+		}
+	} else {
+		shown := public
+		if len(shown) > 3 {
+			shown = shown[:3]
+		}
+		verb := "open"
+		if len(public) == 1 {
+			verb = "opens"
+		}
+		a.Message += fmt.Sprintf("%d %s without sign-in: %s", len(public), verb, strings.Join(shown, ", "))
+		if more := len(public) - len(shown); more > 0 {
+			a.Message += fmt.Sprintf(" and %d more", more)
+		}
+		a.Message += "."
 	}
-	shown := public
-	if len(shown) > 3 {
-		shown = shown[:3]
+	if len(secrets) > 0 {
+		shown := secrets
+		if len(shown) > 3 {
+			shown = shown[:3]
+		}
+		a.Message += " Server secrets found: " + strings.Join(shown, "; ")
+		if more := len(secrets) - len(shown); more > 0 {
+			a.Message += fmt.Sprintf("; and %d more", more)
+		}
+		a.Message += ". Revoke and rotate these secrets, then restrict the apps."
 	}
-	verb := "open"
-	if len(public) == 1 {
-		verb = "opens"
-	}
-	a.Message += fmt.Sprintf("%d %s without sign-in: %s", len(public), verb, strings.Join(shown, ", "))
-	if more := len(public) - len(shown); more > 0 {
-		a.Message += fmt.Sprintf(" and %d more", more)
-	}
-	a.Message += "."
 	return a
 }

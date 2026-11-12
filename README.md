@@ -315,7 +315,8 @@ plugin/skills/grokpatrol-apps/scripts/watch-apps.sh uninstall --apply
 ```
 
 On macOS it installs a launchd agent that runs every 15 minutes (`--interval` to change it);
-elsewhere it prints a crontab line for you to add. With keywords or domains it asks crt.sh and
+elsewhere it prints a crontab line for you to add, supporting intervals of 5, 6, 10, 12, 15, 20,
+30 or 60 minutes. With keywords or domains it asks crt.sh and
 urlscan.io every 6 hours, not every run. The record and log live in `~/.grokpatrol/watch`; API keys
 are not written into the schedule. A background run cannot read Safari's history on macOS, which
 needs Full Disk Access; Chrome, Edge, Brave, Arc and Firefox are read as usual.

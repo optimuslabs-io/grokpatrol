@@ -55,6 +55,36 @@ func TestFirstRunGivesOneSummaryNotOneAlertPerApp(t *testing.T) {
 	}
 }
 
+func TestFirstRunSummaryIncludesServerSecretsAndRotationGuidance(t *testing.T) {
+	a := checkedAs(local("secret-app.grok.me"), model.ExposurePublic)
+	a.Secrets = []model.AppSecret{
+		{Rule: "openai-api-key", Kind: model.SecretServer, Asset: "/server.js"},
+		{Rule: "firebase-api-key", Kind: model.SecretBrowser, Asset: "/client.js"},
+	}
+	a.SecretScanAssets = []string{"/server.js", "/client.js"}
+	_, alerts := Build(t0, []model.PublishedApp{a}, map[string]bool{a.Host: true}, nil, true)
+	if len(alerts) != 1 || alerts[0].Kind != AlertSummary {
+		t.Fatalf("alerts = %+v, want one summary", alerts)
+	}
+	for _, want := range []string{"openai-api-key", "Revoke and rotate", "secret-app.grok.me"} {
+		if !strings.Contains(alerts[0].Message, want) {
+			t.Errorf("summary %q does not include %q", alerts[0].Message, want)
+		}
+	}
+	if strings.Contains(alerts[0].Message, "firebase-api-key") {
+		t.Errorf("browser key included in server-secret guidance: %q", alerts[0].Message)
+	}
+}
+
+func TestFirstRunSummaryDoesNotCallUnknownAppsPrivate(t *testing.T) {
+	a := checkedAs(local("unknown-app.grok.me"), model.ExposureUnknown)
+	_, alerts := Build(t0, []model.PublishedApp{a}, map[string]bool{a.Host: true}, nil, true)
+	if len(alerts) != 1 || strings.Contains(alerts[0].Message, "None opens without sign-in") ||
+		!strings.Contains(alerts[0].Message, "could not be checked successfully") {
+		t.Fatalf("summary = %+v, want an explicit unknown result", alerts)
+	}
+}
+
 func TestAlertsOnlyWhenAnAppNewlyOpens(t *testing.T) {
 	host := "gamma-three.grok.me"
 	checked := map[string]bool{host: true}
@@ -127,6 +157,7 @@ func TestSecretAlertOnlyForNewServerRules(t *testing.T) {
 	withSecrets := func(s ...model.AppSecret) model.PublishedApp {
 		a := checkedAs(local(host), model.ExposurePublic)
 		a.Secrets, a.SecretScan = s, "scanned the home page and 1 of 1 same-host scripts"
+		a.SecretScanAssets = []string{"/", "/assets/a.js"}
 		return a
 	}
 	browser := model.AppSecret{Rule: "gcp-api-key", Kind: model.SecretBrowser, Asset: "/assets/a.js"}
@@ -145,6 +176,45 @@ func TestSecretAlertOnlyForNewServerRules(t *testing.T) {
 	_, alerts = Build(t0.Add(2*time.Hour), []model.PublishedApp{withSecrets(browser, server)}, checked, prev, false)
 	if len(alerts) != 0 {
 		t.Fatalf("repeat secret alert: %+v", alerts)
+	}
+}
+
+func TestPartialSecretScanPreservesFindingsForUnreadAssets(t *testing.T) {
+	host := "partial-scan.grok.me"
+	old := []model.AppSecret{
+		{Rule: "old-server-key", Kind: model.SecretServer, Asset: "/"},
+		{Rule: "existing-server-key", Kind: model.SecretServer, Asset: "/unavailable.js"},
+	}
+	prev := roundTrip(t, []Entry{{Host: host, Source: model.AppSourceLocal, WatchingSince: t0, Secrets: old}})
+	a := checkedAs(local(host), model.ExposurePublic)
+	a.Secrets = []model.AppSecret{{Rule: "new-server-key", Kind: model.SecretServer, Asset: "/"}}
+	a.SecretScan = "scanned the home page and 0 of 1 same-host scripts; one script failed"
+	a.SecretScanAssets = []string{"/"}
+	entries, _ := Build(t0.Add(time.Hour), []model.PublishedApp{a}, map[string]bool{host: true}, prev, false)
+	got := entries[0].Secrets
+	if len(got) != 2 || got[0].Rule != "existing-server-key" || got[1].Rule != "new-server-key" {
+		t.Fatalf("secrets = %+v, want unread finding retained and scanned finding replaced", got)
+	}
+}
+
+func TestPrioritizeAppsChecksNeverCheckedAndLeastRecentFirst(t *testing.T) {
+	found := []model.PublishedApp{
+		{Host: "checked-newest.grok.me"},
+		{Host: "checked-oldest.grok.me"},
+		{Host: "never-checked.grok.me"},
+		{Host: "new-app.grok.me"},
+	}
+	prev := map[string]Entry{
+		"checked-newest.grok.me": {CheckedAt: ptr(t0)},
+		"checked-oldest.grok.me": {CheckedAt: ptr(t0.Add(-time.Hour))},
+		"never-checked.grok.me":  {},
+	}
+	Prioritize(found, prev)
+	want := []string{"never-checked.grok.me", "new-app.grok.me", "checked-oldest.grok.me", "checked-newest.grok.me"}
+	for i := range want {
+		if found[i].Host != want[i] {
+			t.Fatalf("prioritized hosts = %+v, want %v", found, want)
+		}
 	}
 }
 
@@ -188,13 +258,17 @@ func TestCarryKeepsAppsThisRunDidNotFind(t *testing.T) {
 		"kept-dns.grok.me":   {Host: "kept-dns.grok.me", Source: model.AppSourcePassiveDNS},
 		"found-now.grok.me":  {Host: "found-now.grok.me", Source: model.AppSourceLocal, OnThisMachine: true},
 	}
-	rep := &model.Report{Apps: []model.PublishedApp{local("found-now.grok.me")}}
+	rep := &model.Report{Apps: []model.PublishedApp{{Host: "found-now.grok.me", Source: model.AppSourceLocal}}}
 	Carry(rep, prev)
 	if len(rep.Apps) != 3 {
 		t.Fatalf("apps = %+v", rep.Apps)
 	}
 	for _, a := range rep.Apps {
 		switch a.Host {
+		case "found-now.grok.me":
+			if len(a.Seen) != 1 || a.Seen[0].Path != "" {
+				t.Errorf("existing local sighting was not restored: %+v", a.Seen)
+			}
 		case "kept-local.grok.me":
 			if len(a.Seen) != 1 || a.Seen[0].Path != "" {
 				t.Errorf("local app carried without a path-free sighting: %+v", a.Seen)
@@ -242,6 +316,10 @@ func TestLoadRefusesOtherFiles(t *testing.T) {
 	}
 	if _, _, err := Load([]byte(`not json`)); err == nil {
 		t.Error("garbage parsed")
+	}
+	raw := `{"schema":"` + Schema + `","apps":[{"host":"ok-app.grok.me","source":"local","watching_since":"PRIVATE_VALUE"}]}`
+	if _, _, err := Load([]byte(raw)); err == nil || strings.Contains(err.Error(), "PRIVATE_VALUE") {
+		t.Errorf("parse error exposed raw record value: %v", err)
 	}
 }
 

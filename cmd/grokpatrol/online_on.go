@@ -225,11 +225,11 @@ func runWatch(ctx context.Context, env *engine.Env, detectorTimeout time.Duratio
 		var dropped int
 		prev, dropped, err = watch.Load(b)
 		if err != nil {
-			loadErrs = append(loadErrs, model.ScanError{Detector: "watch", Kind: "parse", Path: online.watch,
+			loadErrs = append(loadErrs, model.ScanError{Detector: "watch", Kind: "parse",
 				Message: err.Error() + "; started a new record"})
 			prev = nil
 		} else if dropped > 0 {
-			loadErrs = append(loadErrs, model.ScanError{Detector: "watch", Kind: "parse", Path: online.watch,
+			loadErrs = append(loadErrs, model.ScanError{Detector: "watch", Kind: "parse",
 				Message: engine.Plural(dropped, "entry") + " in the watch record failed validation and were dropped"})
 		}
 	}
@@ -246,6 +246,7 @@ func runWatch(ctx context.Context, env *engine.Env, detectorTimeout time.Duratio
 		discoverApps(ctx, env, rep, nil)
 	}
 	watch.Carry(rep, prev)
+	watch.Prioritize(rep.Apps, prev)
 
 	// Two batches, so the secret scan (up to 9 requests per public app) runs only for
 	// the apps that are due for it, not on every run.
@@ -300,6 +301,7 @@ func runWatch(ctx context.Context, env *engine.Env, detectorTimeout time.Duratio
 	}
 	for _, e := range rep.Errors {
 		if e.Detector == "apps" || e.Detector == "discover" {
+			e.Path = ""
 			rec.Errors = append(rec.Errors, e)
 		}
 	}

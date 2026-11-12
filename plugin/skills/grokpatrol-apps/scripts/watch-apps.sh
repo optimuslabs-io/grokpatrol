@@ -31,7 +31,8 @@ keywords, and checks the apps that are due: new ones and those first seen in the
 last day on every run, the last week hourly, older ones daily.
 
   install       schedule a run every --interval minutes (default 15). macOS: a
-                launchd agent; elsewhere: prints the crontab line to add yourself.
+                launchd agent; elsewhere: prints a crontab line to add yourself.
+                Cron supports intervals 5, 6, 10, 12, 15, 20, 30 and 60 minutes.
                 Prints the plan and changes nothing without --apply.
   uninstall     stop and remove the schedule (with --apply). Keeps the record.
   status        is it scheduled, when did it last run, how many apps it watches.
@@ -43,7 +44,8 @@ last day on every run, the last week hourly, older ones daily.
   --domain D      org domain, e.g. acme.com (repeatable)
   --scan-public   also scan public apps' scripts for keys: when an app first opens,
                   then daily (up to 9 requests per public app)
-  --interval MIN  minutes between runs, 5 to 1440 (install; default 15)
+  --interval MIN  minutes between runs, 5 to 1440 on macOS; cron supports the
+                  intervals listed above (install; default 15)
   --bin PATH      grokpatrol-online (default $GROKPATROL_ONLINE, else on PATH)
   --dir DIR       where the record and log live (default ~/.grokpatrol/watch)
   --home DIR      scan this home directory instead (run; for testing)
@@ -130,6 +132,11 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+if [ "$cmd" = install ] && [ "$(uname -s)" != Darwin ] &&
+	{ [ "$interval" -gt 60 ] || [ $((60 % interval)) -ne 0 ]; }; then
+	die "cron supports intervals of 5, 6, 10, 12, 15, 20, 30 or 60 minutes"
+fi
+
 resolve_bin() {
 	if [ -z "$bin" ]; then
 		bin=$(command -v grokpatrol-online 2>/dev/null) || die "grokpatrol-online not found; pass --bin, set GROKPATROL_ONLINE or put it on PATH"
@@ -139,6 +146,63 @@ resolve_bin() {
 }
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >>"$dir/watch.log"; }
+
+lock_is_stale() {
+	[ -n "$(find "$dir/lock" -maxdepth 0 -mmin +30 2>/dev/null)" ]
+}
+
+lock_identity() {
+	ls -di "$dir/lock" 2>/dev/null | awk '{print $1}'
+}
+
+lock_owner() {
+	cat "$dir/lock/owner" 2>/dev/null || true
+}
+
+acquire_lock() {
+	if mkdir "$dir/lock" 2>/dev/null; then
+		printf '%s\n' "$$" >"$dir/lock/owner"
+		return 0
+	fi
+	if ! lock_is_stale; then
+		log "previous run still going; skipped"
+		return 1
+	fi
+	old_identity=$(lock_identity)
+	old_owner=$(lock_owner)
+	case "$old_owner" in
+		*[!0-9]* | "")
+			;;
+		*)
+			if kill -0 "$old_owner" 2>/dev/null; then
+				log "previous run still going; skipped"
+				return 1
+			fi
+			;;
+	esac
+	if ! mkdir "$dir/lock/recovery" 2>/dev/null; then
+		log "another run is recovering the stale lock; skipped"
+		return 1
+	fi
+	if [ -z "$old_identity" ] || [ "$(lock_identity)" != "$old_identity" ] ||
+		[ "$(lock_owner)" != "$old_owner" ]; then
+		rmdir "$dir/lock/recovery" 2>/dev/null || true
+		log "watch lock changed during stale-lock recovery; skipped"
+		return 1
+	fi
+	rm -rf "$dir/lock"
+	if ! mkdir "$dir/lock" 2>/dev/null; then
+		log "another run acquired the watch lock; skipped"
+		return 1
+	fi
+	printf '%s\n' "$$" >"$dir/lock/owner"
+}
+
+release_lock() {
+	if [ "$(lock_owner)" = "$$" ]; then
+		rm -rf "$dir/lock" "$dir/state.json.new" "$dir/stderr.tmp"
+	fi
+}
 
 notify() {
 	log "ALERT $1: $2"
@@ -162,18 +226,12 @@ do_run() {
 	resolve_bin
 	mkdir -p "$dir"
 	chmod 700 "$dir"
-	# Runs overlap only if one hangs (crt.sh can take minutes); a lock older than
-	# 30 minutes is from a run that died.
-	if ! mkdir "$dir/lock" 2>/dev/null; then
-		if [ -n "$(find "$dir/lock" -maxdepth 0 -mmin +30 2>/dev/null)" ]; then
-			rm -rf "$dir/lock"
-			mkdir "$dir/lock"
-		else
-			log "previous run still going; skipped"
-			return 0
-		fi
+	# Recovery is claimed inside the stale lock. Its identity and owner are rechecked
+	# before removal, so another run cannot replace it between the check and cleanup.
+	if ! acquire_lock; then
+		return 0
 	fi
-	trap 'rm -rf "$dir/lock" "$dir/state.json.new" "$dir/stderr.tmp"' EXIT INT TERM
+	trap 'release_lock' EXIT INT TERM
 
 	set -- --watch "$dir/state.json" --timeout 10m
 	for k in $keywords; do set -- "$@" --org-keyword "$k"; done
@@ -222,12 +280,29 @@ run_args() {
 	[ -z "$scan" ] || printf '%s\n' --scan-public
 }
 
+shell_quote() {
+	printf "'"
+	printf '%s' "$1" | sed "s/'/'\\\\''/g"
+	printf "'"
+}
+
+cron_quote() {
+	shell_quote "$1" | sed 's/%/\\%/g'
+}
+
+cron_args() {
+	run_args | while IFS= read -r arg; do
+		cron_quote "$arg"
+		printf ' '
+	done
+}
+
 do_install() {
 	resolve_bin
 	self=$(abs "$0")
 	installed="$dir/watch-apps.sh"
 	if [ "$(uname -s)" != Darwin ]; then
-		line="*/$interval * * * * /bin/sh '$installed' $(run_args | tr '\n' ' ')"
+		line="*/$interval * * * * /bin/sh $(cron_quote "$installed") $(cron_args)"
 		if [ -z "$apply" ]; then
 			printf 'Plan: copy this script to %s, then you add this line with `crontab -e`:\n  %s\nRe-run with --apply to copy the script.\n' "$installed" "$line"
 			return 0

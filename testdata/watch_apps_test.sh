@@ -15,6 +15,7 @@ cat >"$fake" <<'FAKE'
 #!/bin/sh
 printf '%s\n' "$@" >>"$FAKE_ARGS"
 [ -z "${FAKE_FAIL:-}" ] || { echo "boom" >&2; exit 1; }
+[ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"
 printf '{"schema":"grokpatrol-watch/1","checked_at":"2026-11-12T09:00:00Z","apps":[{"host":"alpha-one.grok.me","public_since":"2026-11-12T09:00:00Z"}]}\n'
 printf 'alert\tPublic grok.me app\talpha-one.grok.me opens without sign-in.\n' >&2
 printf 'watch: 1 app, 1 checked, 1 alert, 0 errors\n' >&2
@@ -31,7 +32,8 @@ grep -qx -- "--discover" "$FAKE_ARGS" || fail "--discover not passed on the firs
 grep -q '"alpha-one.grok.me"' "$dir/state.json" || fail "record not saved"
 grep -q 'ALERT Public grok.me app' "$dir/watch.log" || fail "alert not logged"
 [ ! -e "$dir/lock" ] || fail "lock left behind"
-[ "$(stat -f %Lp "$dir" 2>/dev/null || stat -c %a "$dir")" = 700 ] || fail "record dir is not private"
+mode=$(stat -f %Lp "$dir" 2>/dev/null) || mode=$(stat -c %a "$dir")
+[ "$mode" = 700 ] || fail "record dir is not private"
 
 # The next run does not ask public sources again within 6 hours.
 : >"$FAKE_ARGS"
@@ -58,10 +60,37 @@ sh "$script" run --bin "$fake" --dir "$dir" --no-notify >/dev/null
 [ ! -s "$FAKE_ARGS" ] || fail "ran while another run held the lock"
 rmdir "$dir/lock"
 
+# Two contenders recover one stale lock without starting overlapping runs.
+stale="$work/stale"
+mkdir -p "$stale/lock"
+touch -t 200001010000 "$stale/lock"
+: >"$FAKE_ARGS"
+FAKE_SLEEP=1 sh "$script" run --bin "$fake" --dir "$stale" --no-notify >/dev/null 2>&1 &
+first=$!
+FAKE_SLEEP=1 sh "$script" run --bin "$fake" --dir "$stale" --no-notify >/dev/null 2>&1 &
+second=$!
+wait "$first" || fail "first stale-lock run failed"
+wait "$second" || fail "second stale-lock run failed"
+[ "$(grep -xc -- "--watch" "$FAKE_ARGS")" = 1 ] || fail "stale-lock recovery started overlapping runs"
+[ ! -e "$stale/lock" ] || fail "stale-lock recovery left a lock behind"
+
 # install and uninstall change nothing without --apply.
 HOME="$work/home" sh "$script" install --bin "$fake" --dir "$work/inst" --keyword acmepay >"$work/plan"
 grep -q 'Re-run with --apply' "$work/plan" || fail "install did not print a plan"
 [ ! -e "$work/inst" ] && [ ! -e "$work/home/Library" ] || fail "install wrote without --apply"
+if [ "$(uname -s)" != Darwin ]; then
+	for bad_interval in 45 120; do
+		if sh "$script" install --bin "$fake" --dir "$work/inst" --interval "$bad_interval" >/dev/null 2>&1; then
+			fail "cron accepted unsupported interval $bad_interval"
+		fi
+	done
+	special_bin="$work/grok pat'percent%ol"
+	special_dir="$work/watch state'percent%"
+	cp "$fake" "$special_bin"
+	sh "$script" install --bin "$special_bin" --dir "$special_dir" >"$work/quoted-plan"
+	grep -F "watch state'\\''percent\\%/watch-apps.sh" "$work/quoted-plan" >/dev/null || fail "cron script path was not shell-quoted"
+	grep -F "grok pat'\\''percent\\%ol" "$work/quoted-plan" >/dev/null || fail "cron binary path was not shell-quoted"
+fi
 HOME="$work/home" sh "$script" uninstall --dir "$work/inst" >/dev/null
 [ ! -e "$work/inst" ] || fail "uninstall wrote without --apply"
 
