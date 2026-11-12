@@ -50,6 +50,24 @@ type Env struct {
 	// bill of health.
 	MaxBlobScanBytes int64
 
+	// CheckExposure records that the opt-in online check (--check-exposure) will run
+	// after the scan. The engine never touches the network itself; this only lets the
+	// report state truthfully which kind of run it was. Always false in the standard
+	// build, which does not contain the flag or any network code.
+	CheckExposure bool
+	// Discover, GrokSearch, AppHosts, OrgKeywords and OrgDomains record the opt-in
+	// public-source lookups (--discover, --grok-search, --app-hosts) for the same
+	// reason: so the report says exactly what this run asked the network.
+	Discover   bool
+	GrokSearch bool
+	AppHosts   bool
+	// ScanPublic and ScanKeywordMatches record the opt-in secret scan of public
+	// apps (--scan-public, --scan-keyword-matches).
+	ScanPublic         bool
+	ScanKeywordMatches bool
+	OrgKeywords        []string
+	OrgDomains         []string
+
 	ExtraRepos []string // --repo, forced into triage even if the logs never mention them
 	// SeedRepos are the repositories the log ledger implicated. The engine fills
 	// this between phases, which is why secrets runs last.
@@ -142,8 +160,12 @@ type Result struct {
 	Findings    []model.Finding
 	Repos       []model.RepoStatus
 	Versions    []model.VersionEvidence
+	Apps        []model.PublishedApp
 	Errors      []model.ScanError
 	Limitations []string
+	// AppLimitations are caveats about grok.me apps (apps detector only). They reach
+	// both the full report and --apps-only; see model.Report.AppLimitations.
+	AppLimitations []string
 
 	// Summary is the one line the progress display prints when this detector
 	// finishes: what it found, in the detector's own words. It is for the human

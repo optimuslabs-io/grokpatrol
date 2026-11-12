@@ -1,0 +1,14 @@
+{
+  "name": "grokpatrol",
+  "owner": {
+    "name": "Optimus Labs",
+    "url": "https://www.optimuslabs.io"
+  },
+  "plugins": [
+    {
+      "name": "grokpatrol",
+      "source": "./plugin",
+      "description": "Find Grok Build apps (*.grok.me) tied to your org and check whether they open without sign-in, using free sources and grokpatrol-online."
+    }
+  ]
+}

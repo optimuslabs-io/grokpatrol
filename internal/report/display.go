@@ -51,6 +51,12 @@ func Display(rep *model.Report, home string) {
 		// SecretFiles[].Path is repo-relative already, and stays that way.
 	}
 
+	for i := range rep.Apps {
+		for j := range rep.Apps[i].Seen {
+			rep.Apps[i].Seen[j].Path = p(rep.Apps[i].Seen[j].Path)
+		}
+	}
+
 	for i := range rep.Versions {
 		rep.Versions[i].Path = p(rep.Versions[i].Path)
 	}

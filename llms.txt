@@ -11,7 +11,15 @@ ask from the evidence left on disk: which repositories were taken, and what must
 Confirmed-affected build: 0.2.93. Reported present through at least 0.2.99. Detects 0.1.212
 through the latest observed. macOS and Linux, amd64 and arm64.
 
-Guarantees, mechanically enforced: no network (net/net/http/crypto/tls not linked; go.sum absent/empty — enforced by verify-deps),
+Also lists Grok Build app addresses (*.grok.me) seen in browser history, Grok CLI sessions and shell history; a separate
+grokpatrol-online build adds --check-exposure (one unauthenticated request per app: public / app_sign_in / restricted / not_found / unknown),
+--scan-public (scans public apps' home page and same-host scripts in memory for keys; records rule id, kind and path, never the value)
+and --discover (free: crt.sh, urlscan.io, AlienVault OTX with a free key), --grok-search (xAI web/X search, $XAI_API_KEY) and
+--app-hosts (validated URLs from your own search). An agent plugin in this repo (skill grokpatrol-apps, Parallel free search MCP)
+runs it end to end in Claude Code, Cursor or the Grok CLI (`<agent> plugin marketplace add optimuslabs-io/grokpatrol`), reading
+only --json --apps-only output, which carries no repositories or secret locations.
+
+Guarantees, mechanically enforced: no network in grokpatrol (net/net/http/crypto/tls not linked; go.sum absent/empty — enforced by verify-deps),
 read-only (O_RDONLY only), zero third-party dependencies, never executes the grok binary, never
 reads secret values (git cat-file off the allowlist), and a degraded scan never reports CLEAN.
 

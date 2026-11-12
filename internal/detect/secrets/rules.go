@@ -355,3 +355,18 @@ func shannonEntropy(s string) float64 {
 	}
 	return entropy
 }
+
+// ScanBytes runs the content rules over data already held in memory and returns
+// the ids of the rules that matched, never the matched bytes. name is matched
+// against rule and allowlist path patterns, so callers pass a fixed name of their
+// own (for example "bundle.js"), never one taken from the data's source.
+func ScanBytes(name string, data []byte) ([]string, error) {
+	rs, err := compiledRules()
+	if err != nil {
+		return nil, err
+	}
+	if looksBinary(data) {
+		return nil, nil
+	}
+	return rs.scan(name, data), nil
+}

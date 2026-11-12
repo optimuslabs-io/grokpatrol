@@ -76,6 +76,7 @@ func Human(w io.Writer, rep *model.Report, s Style) {
 	ledger(w, rep, s)
 	staging(w, rep, s)
 	secrets(w, rep, s)
+	apps(w, rep, s)
 	otherFindings(w, rep, s)
 	degraded(w, rep, s)
 	limitations(w, rep, s)

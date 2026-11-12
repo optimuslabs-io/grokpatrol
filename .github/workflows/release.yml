@@ -109,13 +109,15 @@ jobs:
 
       - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: dist/grokpatrol_*
+          subject-path: |
+            dist/grokpatrol_*
+            dist/grokpatrol-online_*
 
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
-            dist/grokpatrol_* dist/SHA256SUMS \
+            dist/grokpatrol_* dist/grokpatrol-online_* dist/SHA256SUMS \
             --verify-tag \
             --title "${{ steps.version.outputs.tag }}" \
             --generate-notes

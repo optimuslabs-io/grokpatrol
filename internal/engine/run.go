@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,10 @@ func (e *Engine) Run(ctx context.Context, env *Env) *model.Report {
 			HistoryScope: env.HistoryScope, UseGit: env.UseGit,
 			Concurrency: env.Concurrency, MaxFileSize: env.MaxFileSize,
 			FullSecretsSearch: env.FullSecretsSearch, MaxBlobScanBytes: env.MaxBlobScanBytes,
+			CheckExposure: env.CheckExposure,
+			Discover:      env.Discover, GrokSearch: env.GrokSearch, AppHosts: env.AppHosts,
+			ScanPublic: env.ScanPublic, ScanKeywordMatches: env.ScanKeywordMatches,
+			OrgKeywords: env.OrgKeywords, OrgDomains: env.OrgDomains,
 		},
 		Counts: map[string]int{},
 	}
@@ -70,6 +75,8 @@ func (e *Engine) Run(ctx context.Context, env *Env) *model.Report {
 		rep.Versions = append(rep.Versions, r.Versions...)
 		rep.Errors = append(rep.Errors, r.Errors...)
 		rep.Limitations = append(rep.Limitations, r.Limitations...)
+		rep.AddAppLimitations(r.AppLimitations...)
+		rep.Apps = append(rep.Apps, r.Apps...)
 	}
 
 	// Phase 1.
@@ -226,8 +233,11 @@ func finalize(rep *model.Report, env *Env, elapsed time.Duration) {
 
 	rep.GrokPresent = grokFound(rep, env)
 	rep.Verdict = verdict(rep)
-	rep.Limitations = append(rep.Limitations, standingLimitations(env)...)
+	general, app := standingLimitations(env)
+	rep.Limitations = append(rep.Limitations, general...)
+	rep.AppLimitations = append(rep.AppLimitations, app...)
 	rep.Limitations = dedupeStrings(rep.Limitations)
+	rep.AppLimitations = dedupeStrings(rep.AppLimitations)
 }
 
 // verdict is deliberately conservative. The rule that matters is the last one:
@@ -296,13 +306,50 @@ func grokFound(rep *model.Report, env *Env) bool {
 	return false
 }
 
-func standingLimitations(env *Env) []string {
+// standingLimitations returns every standing caveat, and separately the ones that
+// concern apps and public sources (which are also in the first list).
+func standingLimitations(env *Env) (all, app []string) {
 	out := []string{
 		"grokpatrol only sees what is still on this host. Logs that were rotated away, an upload queue that was " +
 			"already drained, or a repository that has since been deleted leave no local trace -- and none of that " +
 			"undoes an upload that already happened.",
-		"This tool makes no network calls. It cannot tell you whether xAI still holds your archives, only whether " +
-			"this machine shows that they were collected and queued.",
+		noNetworkLimitation,
+	}
+	if env.CheckExposure || env.Discover || env.GrokSearch {
+		// The exceptions are narrow and were asked for by name; say exactly what they were.
+		var did []string
+		if env.Discover {
+			did = append(did, "listed grok.me names from crt.sh, urlscan.io and (with a key) AlienVault OTX (--discover)")
+		}
+		if env.GrokSearch {
+			did = append(did, "asked the xAI API's web and X search for grok.me apps matching the org keywords (--grok-search)")
+		}
+		if env.CheckExposure {
+			did = append(did, "made one unauthenticated request to each grok.me app found (--check-exposure)")
+		}
+		if env.ScanPublic {
+			did = append(did, "fetched up to 8 same-host scripts from each public app and scanned them in memory for secrets (--scan-public)")
+		}
+		out[1] = "This run " + strings.Join(did, " and ") + ", and made no other network call. It still cannot " +
+			"tell you whether xAI holds your archives, only whether this machine shows that they were collected and queued."
+		app = append(app, out[1])
+	}
+	if env.Discover || env.GrokSearch || env.AppHosts {
+		l := "Public sources only know names that got a certificate, a scan, a passive DNS sighting or a " +
+			"search hit, and crt.sh may cap a large answer. An app whose name has no org keyword (most are four random " +
+			"words) will not be matched; no match is not proof of no apps, and a match is a lead, not proof of ownership."
+		out = append(out, l)
+		app = append(app, l)
+	}
+	if env.ScanPublic {
+		l := "The secret scan reads only what a stranger is served first: the home page and up to 8 of its same-host " +
+			"scripts, 4 MB each. Keys fetched later, loaded from other hosts or kept behind sign-in are not seen, and " +
+			"no match is not proof of no secrets."
+		if !env.ScanKeywordMatches {
+			l += " Apps tied to the org only by a keyword or a search result were not scanned; pass --scan-keyword-matches to include them."
+		}
+		out = append(out, l)
+		app = append(app, l)
 	}
 	if runtime.GOOS == "darwin" {
 		out = append(out, "On macOS, ~/Documents, ~/Desktop, ~/Downloads and ~/Library/Containers are protected by TCC. "+
@@ -312,8 +359,11 @@ func standingLimitations(env *Env) []string {
 		out = append(out, "On Windows there is no filesystem-device check, so the walker uses reparse points to avoid "+
 			"crossing mounts. A volume mounted under a junction may have been skipped.")
 	}
-	return out
+	return out, app
 }
+
+const noNetworkLimitation = "This tool makes no network calls. It cannot tell you whether xAI still holds your archives, " +
+	"only whether this machine shows that they were collected and queued."
 
 func appendUnique(list []string, vals ...string) []string {
 	for _, v := range vals {

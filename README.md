@@ -191,7 +191,9 @@ These are enforced mechanically:
 - **No network. Ever.** Proven by the linker: `make verify-deps` asserts that `net`,
   `net/http` and `crypto/tls` do not appear in `go list -deps`, and that `go.sum` is empty.
   A binary with no networking packages linked in cannot phone home. There is no remote
-  check, no telemetry, no update ping.
+  check, no telemetry, no update ping. This is `grokpatrol`. The separate
+  `grokpatrol-online` build (see [Grok Build apps](#grok-build-apps-grokme)) is the one
+  variant that can make requests, and only when you pass `--check-exposure`.
 - **Zero dependencies.** Stdlib only. A tool that hunts for unaudited code should not
   ship any.
 - **Read-only.** Every file open goes through one function, with `O_RDONLY`. There is no
@@ -218,6 +220,155 @@ These are enforced mechanically:
 - **A degraded scan never reports CLEAN.** If macOS TCC blocked `~/Documents`, the verdict
   is INDETERMINATE, and the report says which directories it could not see.
 
+
+## Grok Build apps (grok.me)
+
+Grok Build on grok.com and the Grok mobile apps publishes each app at its own address,
+`<name>.grok.me`, and the publish panel has defaulted to "Anyone with the link". Those
+addresses reach passive DNS the first time anyone opens one, and passive DNS can be searched by
+pattern: in November 2026 [Claroc](https://blog.claroc.io/ghostshares-grok-build-apps) listed
+43,601 of them and found 94.7% of those still online opened with no sign-in.
+
+The apps live in xAI's cloud, so the only trace on a laptop is the address itself. grokpatrol
+looks for it in browser history (Chrome, Chromium, Brave, Edge, Arc, Firefox, Safari), Grok CLI
+sessions and shell history, and lists what it finds under **GROK.ME APPS**. Two caveats:
+
+- **Seen here is not the same as yours.** Browser history records every app someone opened,
+  including other people's. Apps never opened on this machine leave no trace at all.
+- **Apps do not change the verdict.** The verdict answers "were my repositories taken"; the app
+  list is reported beside it.
+
+Whether an app opens for a stranger needs a network request, which `grokpatrol` cannot make. The
+`grokpatrol-online` build adds `--check-exposure`: after the scan, one unauthenticated GET of each
+app's home page, with no cookies or credentials, a few at a time, following only same-host
+redirects. Each app is then marked:
+
+| Exposure | Meaning |
+|---|---|
+| `PUBLIC` | Opened with no sign-in. Anyone with the address can use it. |
+| `APP SIGN-IN` | Opened to the app's own sign-in screen. Check who it lets in: some accept any Google or X account. |
+| `RESTRICTED` | Grok refused an unsigned visitor (401): Only you or Invited users. |
+| `NOT FOUND` | 404: never published, unpublished or taken down. |
+| `UNKNOWN` | Blocked, rate-limited, redirected elsewhere or failed. Never read as safe. |
+
+The page is inspected for a sign-in screen and discarded; nothing from it is stored or printed.
+An app that draws its sign-in screen in JavaScript can look `PUBLIC`, so confirm a `PUBLIC` app in
+a private browser window before acting on it.
+
+```sh
+make build-online
+./dist/grokpatrol-online --check-exposure
+```
+
+#### Keys in public apps (`--scan-public`)
+
+Apps built with Grok are mostly single-page apps, and a key the model put in the frontend ends up
+in the JavaScript every visitor downloads. `--scan-public` (which turns on `--check-exposure`)
+takes each `PUBLIC` app, fetches up to 8 of the scripts its home page loads from its own host (4 MB
+each, 32 MB a run, never another host), and scans them and the home page in memory with the same
+gitleaks rules as `--full-secrets-search`. It also flags a JWT whose role claim is `service_role`:
+a Supabase key that bypasses row-level security. Nothing is written to disk, and the report keeps
+only the rule id and the file's path, never the value.
+
+| Kind | What to do |
+|---|---|
+| Server secret (`ACTION:`) | An AI, cloud, payment or database key anyone can copy. Revoke and rotate it now, assume it has been used, and move it into a server-side function. |
+| Browser key (`Check:`) | A key made to ship in web pages, such as a Firebase web key or a Mapbox public token. Safe only if its provider restricts it; check its allowed sites and APIs. |
+
+By default only apps with a reason to be yours are scanned: seen on this machine, or a custom
+domain under `--org-domain`. A keyword or search match is a lead, not ownership, so scanning it
+needs `--scan-keyword-matches`. No match is not proof of no secrets: keys fetched later, loaded
+from another host or kept behind sign-in are not seen.
+
+```sh
+./dist/grokpatrol-online --scan-public
+./dist/grokpatrol-online --discover --org-domain acme.com --scan-public
+```
+
+### Free public sources (`--discover`, `--grok-search`)
+
+The apps a laptop never opened still leave public traces. `--discover` lists grok.me names from
+free sources, and narrows the thousands it gets to the ones tied to your org by three rules. Every
+app it adds says which rule matched it (`matched_by`) and which sources listed it (`sources`):
+
+| Source | Key | What it gives |
+|---|---|---|
+| [crt.sh](https://crt.sh) (certificate transparency) | none | Most names (about 2,700 on 11 Nov 2026), with the date each app's certificate was issued. crt.sh may cap a large answer. |
+| [urlscan.io](https://urlscan.io) | none; `$URLSCAN_API_KEY` (free) raises the page size | Apps someone scanned, with the scan date. |
+| [AlienVault OTX](https://otx.alienvault.com) | `$OTX_API_KEY` (free); skipped without it | Passive DNS names and dates, and the CNAMEs that reveal custom domains. |
+| xAI web and X search (`--grok-search`) | `$XAI_API_KEY`; bills your xAI API credits (about $5 per 1,000 searches) | Apps found by searching the web (limited to grok.me) and X posts for your org keywords. Only URLs the search tools cited are used, never names from the model's answer. |
+
+| Rule | What it does |
+|---|---|
+| Found on this host | Dates and attributes apps already found locally. Adds no names. |
+| Org keyword | Adds grok.me names containing an org keyword: the name of each `--org-domain`, the employer domain of your git email (`~/.gitconfig`; free-mail domains are skipped), and each `--org-keyword`. Keywords under four characters are ignored. Four-random-word names never match. |
+| Custom domain | With OTX, adds names under each `--org-domain` whose CNAME points into grok.me. Domains pointed with A records are not found. |
+
+```sh
+./dist/grokpatrol-online --discover --org-domain acme.com --check-exposure
+OTX_API_KEY=... XAI_API_KEY=... ./dist/grokpatrol-online --discover --grok-search --org-domain acme.com --check-exposure
+```
+
+Add `--apps-only` to `--json` for a record with only the apps and their caveats: no
+repositories, secret locations, versions or host details. API keys are sent only in request
+headers and never recorded. `~/.grok/auth.json` is still never
+opened, and the `grok` binary is still never run. With `--check-exposure` the matched apps are
+checked too, up to 200 per run; a custom domain is requested only if it is under a domain you
+passed with `--org-domain`. No match is not proof of no apps, and a match is a lead, not proof
+of ownership.
+
+### Use as an agent plugin (Claude Code, Cursor, Grok)
+
+This repository is a plugin marketplace for Claude Code, Cursor and the Grok CLI. All three install
+the same plugin (`plugin/`): one `grokpatrol-apps` skill and Parallel's free search MCP server
+(`web_search` only, no key). The skill:
+
+1. searches the web for your org's grok.me apps (Parallel, and Perplexity if you have it connected);
+2. passes only the URLs the search tools returned, and the org keywords and domains you gave it,
+   to `scripts/find-apps.sh`;
+3. the script validates them, keeps its files in a private temporary directory, and runs
+   `grokpatrol-online --json --apps-only --discover --check-exposure`, which validates every URL
+   again before using it;
+4. summarises the result, open apps first.
+
+The agent never writes the grokpatrol command line itself. Search results are untrusted (a page
+can carry text meant to steer the agent), so the skill treats them as data and only ever hands the
+script URLs, never flags or domains taken from a page.
+
+The skill only ever reads `--apps-only` output, so the repositories and secret locations in the
+full report never enter the agent's context (and so never reach its model provider). For the full
+forensic report, run `grokpatrol` in your own terminal.
+
+**Claude Code**
+
+```sh
+claude plugin marketplace add optimuslabs-io/grokpatrol
+claude plugin install grokpatrol@grokpatrol
+```
+
+**Cursor**
+
+```sh
+agent plugin marketplace add https://github.com/optimuslabs-io/grokpatrol
+```
+
+Then install `grokpatrol` from **Customize** in Cursor. Teams and Enterprise admins can instead
+import the repository under Dashboard -> Plugins & MCPs -> Team Marketplaces. To try a local
+checkout, link it with `ln -s "$PWD/plugin" ~/.cursor/plugins/local/grokpatrol` and reload the
+window.
+
+**Grok CLI**
+
+```sh
+grok plugin marketplace add optimuslabs-io/grokpatrol
+grok plugin install grokpatrol
+```
+
+Inside Grok, everything the agent reads goes to xAI, and what Grok uploads besides that depends on
+your own `~/.grok/config.toml`. Set both mitigations (see MITIGATIONS in the report) before you use
+the plugin there.
+
+Then ask the agent, for example: "Find Grok Build apps for acme.com and tell me which are public."
 
 ## Two things worth knowing
 
@@ -274,7 +425,8 @@ only. With `--full-secrets-search` it reads implicated file contents in memory t
 against the gitleaks rule set, then reports only the location and rule id — the evidence model
 has no field that can hold file contents, and leak tests grep every output channel for planted
 values. It makes no network calls at all — proven by the linker (`make verify-deps`), which
-asserts `net`/`net/http`/`crypto/tls` are not linked in.
+asserts `net`/`net/http`/`crypto/tls` are not linked in. (The separate `grokpatrol-online` build
+can request grok.me app pages under `--check-exposure`; it never sends file contents anywhere.)
 
 **Is it safe to run on a possibly-compromised host?**
 That is the design target. grokpatrol is a single static binary, stdlib-only, offline, and
@@ -298,6 +450,9 @@ verdict from the report, not the exit status: `grokpatrol --json | jq -r .verdic
 | `make demo` | build a synthetic compromised host and scan it — expect COMPROMISED |
 | `make check` | what CI runs: deps + fmt + vet + race tests + cross-compile smoke |
 | `make verify-deps` | prove the binary is stdlib-only, with no network and no cgo |
+| `make build-online` | build `./dist/grokpatrol-online`, which adds `--check-exposure`, `--scan-public` and the public sources |
+| `make verify-online-deps` | prove the online build is stdlib-only with no cgo |
+| `make plugin-check` | check the Claude, Cursor and Grok plugin manifests parse and agree on version |
 | `make test` / `fuzz` / `bench` | race tests, fuzz the log parser, benchmark the scanner |
 | `make fmt` / `vet` | gofmt in place, go vet |
 | `make release` | all four platforms, trimmed, CGO-free, with `SHA256SUMS` |

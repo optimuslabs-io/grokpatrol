@@ -1,0 +1,17 @@
+{
+  "name": "grokpatrol",
+  "displayName": "grokpatrol",
+  "version": "0.1.0",
+  "description": "Find Grok Build apps (*.grok.me) tied to your org with free sources (crt.sh, urlscan.io, OTX, Parallel web search, optional Grok search) and check whether they open without sign-in.",
+  "author": {
+    "name": "Optimus Labs"
+  },
+  "homepage": "https://github.com/optimuslabs-io/grokpatrol",
+  "repository": "https://github.com/optimuslabs-io/grokpatrol",
+  "license": "Apache-2.0",
+  "keywords": ["security", "grok", "forensics", "osint"],
+  "category": "security",
+  "tags": ["security", "grok", "osint"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}
