@@ -1,0 +1,15 @@
+{
+  "name": "grokpatrol",
+  "description": "Optimus Labs grokpatrol: find Grok Build apps (*.grok.me) tied to your org and check whether they open without sign-in.",
+  "owner": { "name": "Optimus Labs", "url": "https://www.optimuslabs.io" },
+  "plugins": [
+    {
+      "name": "grokpatrol",
+      "description": "Find Grok Build apps (*.grok.me) tied to your org and check whether they open without sign-in, using free sources and grokpatrol-online.",
+      "category": "security",
+      "version": "0.1.0",
+      "homepage": "https://github.com/optimuslabs-io/grokpatrol",
+      "source": { "type": "local", "path": "./plugin" }
+    }
+  ]
+}

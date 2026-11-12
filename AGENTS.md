@@ -64,6 +64,27 @@ grokpatrol --version     # print version and exit
   `--grok-home <dir>`, `--scan-root <dir>` (repeatable), `--no-git`, `--timeout <dur>`,
   `--color never`. Full list: `grokpatrol --help`.
 - It runs entirely offline and makes no network calls. Do not expect or require network egress.
+- `--json` also carries `published_apps`: Grok Build app addresses (`*.grok.me`) seen in browser
+  history, Grok CLI sessions and shell history. They do not affect the verdict, and an address seen
+  here may be somebody else's app. Each entry's `exposure` is empty unless the separate
+  `grokpatrol-online` build ran with `--check-exposure`, which makes one unauthenticated request per
+  app and sets `public`, `app_sign_in`, `restricted`, `not_found` or `unknown`. Only run that build
+  when the user asks to check whether their apps are open; it makes network requests.
+- `grokpatrol-online --scan-public` also fetches up to 8 same-host scripts from each `public` app and
+  scans them in memory. Each app then has `secrets` (`rule`, `kind` `server` or `browser`, `asset`
+  path; never a value) and `secret_scan` (what was read, or why not). Only apps seen on this host or
+  under `--org-domain` are scanned unless `--scan-keyword-matches` is passed; ask the user before
+  passing it, since it scans apps that may be someone else's.
+- `grokpatrol-online --discover` adds apps from free public sources (crt.sh and urlscan.io with no
+  key, AlienVault OTX with a free `$OTX_API_KEY`); `--grok-search` adds xAI web and X search (needs
+  `$XAI_API_KEY`, bills the user's xAI API credits; ask first); `--app-hosts <file>` adds URLs from
+  your own web search, validated line by line. Added apps have `source` (`passive_dns` or
+  `web_search`), `sources`, a `matched_by` rule and `first_seen`/`last_seen`. A keyword match is a
+  lead, not proof of ownership. The `grokpatrol` plugin in this repo (Claude Code, Cursor and Grok
+  CLI; `plugin/skills/grokpatrol-apps`) runs this end to end.
+- `--json --apps-only` emits only `published_apps` with their errors and caveats: no repositories,
+  secret locations, versions or host details. When your context goes to a model provider, read
+  this, not the full report.
 
 ## Interpret the result
 
@@ -100,6 +121,8 @@ These are mechanically enforced in the codebase, not aspirational:
 
 - **No network, ever.** `net`, `net/http`, `crypto/tls` are not linked in (`make verify-deps`);
   `go.sum` is absent (no third-party dependencies). The binary cannot phone home, and there is no telemetry or update ping.
+  This holds for `grokpatrol`. `grokpatrol-online` is a separate build (`-tags online`) whose only
+  network use is `--check-exposure`, off by default.
 - **Read-only.** Every file open is `O_RDONLY` through one function; no write/create/rename/remove.
   A test proves `.git` is byte-for-byte identical after a scan.
 - **Never executes the `grok` binary** — not even `--version`. Version is inferred passively.

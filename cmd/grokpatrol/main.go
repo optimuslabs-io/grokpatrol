@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/optimuslabs-io/grokpatrol/internal/buildinfo"
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/apps"
 	cfgdet "github.com/optimuslabs-io/grokpatrol/internal/detect/config"
 	"github.com/optimuslabs-io/grokpatrol/internal/detect/deepscan"
 	"github.com/optimuslabs-io/grokpatrol/internal/detect/logs"
@@ -62,6 +63,7 @@ func run() int {
 		crossFS     = flag.Bool("cross-filesystem", false, "descend into other mounted filesystems")
 
 		asJSON    = flag.Bool("json", false, "emit the machine-readable report on stdout")
+		appsOnly  = flag.Bool("apps-only", false, "with --json, emit only the grok.me apps and their caveats: no repositories, secret locations, versions or host details (for agents)")
 		colorMode = flag.String("color", "auto", "auto | always | never")
 		quiet     = flag.Bool("quiet", false, "print only the verdict")
 		verbose   = flag.Bool("verbose", false, "print every archive, secret and evidence row instead of a sample")
@@ -70,6 +72,8 @@ func run() int {
 	)
 	flag.Var(&scanRoot, "scan-root", "additional root to scan (repeatable)")
 	flag.Var(&repos, "repo", "force this repository into secret triage (repeatable)")
+
+	registerOnlineFlags()
 
 	flag.Usage = usage
 	flag.Parse()
@@ -81,6 +85,10 @@ func run() int {
 		return 0
 	}
 
+	if *appsOnly && !*asJSON {
+		fmt.Fprintln(os.Stderr, "grokpatrol: --apps-only needs --json")
+		return model.ExitToolError
+	}
 	if s := *historyScope; s != "head" && s != "all" && s != "none" {
 		fmt.Fprintf(os.Stderr, "grokpatrol: unknown --history-scope value %q\n", s)
 		return model.ExitToolError
@@ -108,6 +116,10 @@ func run() int {
 		ExtraRepos:        repos,
 		FullSecretsSearch: *fullSecrets,
 		MaxBlobScanBytes:  *maxBlobBytes,
+	}
+	if err := configureOnline(env); err != nil {
+		fmt.Fprintf(os.Stderr, "grokpatrol: %v\n", err)
+		return model.ExitToolError
 	}
 
 	// Ctrl-C produces a partial report rather than nothing: on a machine you are
@@ -141,12 +153,16 @@ func run() int {
 
 	eng := &engine.Engine{
 		Discover:        deepscan.New(),
-		Readers:         []engine.Detector{logs.New(), queue.New(), cfgdet.New(), version.New()},
+		Readers:         []engine.Detector{logs.New(), queue.New(), cfgdet.New(), version.New(), apps.New()},
 		Triage:          secrets.New(),
 		DetectorTimeout: *detTimeout,
 		Progress:        prog,
 	}
 	rep := eng.Run(ctx, env)
+	// Opt-in network work (grokpatrol-online only). It runs after the offline scan,
+	// so the engine and every detector stay network-free in both builds; it fixes up
+	// the limitations itself, since finalize ran before it.
+	runOnline(ctx, env, rep, prog)
 
 	// Detectors record the paths they actually opened; this is the one place they
 	// are rewritten for a reader (~/work/foo). Both renderers get the same report,
@@ -154,7 +170,11 @@ func run() int {
 	report.Display(rep, h)
 
 	if *asJSON {
-		if err := report.JSON(os.Stdout, rep); err != nil {
+		write := report.JSON
+		if *appsOnly {
+			write = report.AppsJSON
+		}
+		if err := write(os.Stdout, rep); err != nil {
 			fmt.Fprintf(os.Stderr, "grokpatrol: %v\n", err)
 			return model.ExitToolError
 		}

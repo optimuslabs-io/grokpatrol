@@ -3,6 +3,7 @@ package engine_test
 import (
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/apps"
 	cfgdet "github.com/optimuslabs-io/grokpatrol/internal/detect/config"
 	"github.com/optimuslabs-io/grokpatrol/internal/detect/deepscan"
 	"github.com/optimuslabs-io/grokpatrol/internal/detect/logs"
@@ -257,6 +259,82 @@ func TestCleanHostIsNotExposed(t *testing.T) {
 	}
 }
 
+// --apps-only is what an agent reads, and an agent's context goes to its model
+// provider. On a compromised host it must carry the apps and nothing about the
+// repositories that were taken or where their secrets live.
+func TestAppsOnlyCarriesNoRepoOrSecretLocations(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	home := buildFakeHome(t)
+	write(t, filepath.Join(home, ".zsh_history"), "open https://tiny-city.grok.me/\n")
+	rep := scanHome(t, home)
+	report.Display(rep, home)
+
+	var sensitive []string
+	for _, r := range rep.Repos {
+		if r.RepoPath != model.UnknownRepo {
+			sensitive = append(sensitive, r.RepoPath, filepath.Base(r.RepoPath))
+		}
+		for _, h := range r.SecretFiles {
+			sensitive = append(sensitive, h.Path)
+		}
+	}
+	if len(sensitive) < 3 {
+		t.Fatalf("fixture implicated too little to test with: %v", sensitive)
+	}
+
+	var full, apps strings.Builder
+	if err := report.JSON(&full, rep); err != nil {
+		t.Fatal(err)
+	}
+	if err := report.AppsJSON(&apps, rep); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(apps.String(), "tiny-city.grok.me") {
+		t.Error("--apps-only lost the app")
+	}
+	for _, s := range sensitive {
+		if !strings.Contains(full.String(), s) {
+			t.Errorf("sanity: the full report should contain %q", s)
+		}
+		if strings.Contains(apps.String(), s) {
+			t.Errorf("--apps-only leaked %q", s)
+		}
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(apps.String()), &top); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"repos", "findings", "versions", "host", "counts"} {
+		if _, ok := top[key]; ok {
+			t.Errorf("--apps-only has a top-level %q field", key)
+		}
+	}
+}
+
+// A grok.me address in browser history says someone opened an app, possibly somebody
+// else's. It is listed, but it must not move the verdict, which answers only whether
+// this machine's repositories were taken.
+func TestGrokMeAppsDoNotMoveTheVerdict(t *testing.T) {
+	home := t.TempDir()
+	write(t, filepath.Join(home, ".zsh_history"), "open https://tiny-city.grok.me/\n")
+	rep := scanHome(t, home)
+
+	if rep.Verdict != model.VerdictClean {
+		t.Errorf("verdict = %s, want CLEAN\nfindings: %s", rep.Verdict, ids(rep))
+	}
+	if rep.GrokPresent {
+		t.Error("an app address alone was read as Grok being installed")
+	}
+	if len(rep.Apps) != 1 || rep.Apps[0].Host != "tiny-city.grok.me" {
+		t.Errorf("apps = %+v", rep.Apps)
+	}
+	if rep.Options.CheckExposure {
+		t.Error("an offline run claims it checked exposure")
+	}
+}
+
 func scanHome(t *testing.T, home string) *model.Report {
 	t.Helper()
 	env := &engine.Env{
@@ -273,7 +351,7 @@ func scanHome(t *testing.T, home string) *model.Report {
 	}
 	eng := &engine.Engine{
 		Discover:        deepscan.New(),
-		Readers:         []engine.Detector{logs.New(), queue.New(), cfgdet.New(), version.New()},
+		Readers:         []engine.Detector{logs.New(), queue.New(), cfgdet.New(), version.New(), apps.New()},
 		Triage:          secrets.New(),
 		DetectorTimeout: 2 * time.Minute,
 	}

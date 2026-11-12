@@ -52,6 +52,24 @@ type Options struct {
 	// "contents were never read" claim is true only when it is false.
 	FullSecretsSearch bool  `json:"full_secrets_search"`
 	MaxBlobScanBytes  int64 `json:"max_blob_scan_bytes,omitempty"`
+	// CheckExposure records whether this run made network requests to the grok.me
+	// apps it found (--check-exposure, grokpatrol-online build only). False in every
+	// standard build, which cannot make a network call at all.
+	CheckExposure bool `json:"check_exposure"`
+	// Discover, GrokSearch and AppHosts record which public sources this run used
+	// for grok.me names (grokpatrol-online build only), and with which org
+	// identifiers. API keys are never recorded.
+	Discover   bool `json:"discover"`
+	GrokSearch bool `json:"grok_search"`
+	AppHosts   bool `json:"app_hosts"`
+	// ScanPublic records whether public apps' pages and same-host scripts were
+	// fetched and scanned in memory for secrets (--scan-public), and
+	// ScanKeywordMatches whether that included apps tied to the org only by a
+	// keyword or a search result.
+	ScanPublic         bool     `json:"scan_public"`
+	ScanKeywordMatches bool     `json:"scan_keyword_matches"`
+	OrgKeywords        []string `json:"org_keywords,omitempty"`
+	OrgDomains         []string `json:"org_domains,omitempty"`
 }
 
 type Report struct {
@@ -74,10 +92,27 @@ type Report struct {
 	Findings    []Finding         `json:"findings"`
 	Repos       []RepoStatus      `json:"repos"`
 	Versions    []VersionEvidence `json:"versions"`
+	// Apps are Grok Build app addresses (*.grok.me) seen on this host. They do not
+	// feed the verdict: the verdict answers "were my repositories taken", and an app
+	// address in browser history may belong to somebody else.
+	Apps []PublishedApp `json:"published_apps"`
 
 	Errors   []ScanError `json:"errors"`
 	Degraded bool        `json:"degraded"`
 	// Limitations is populated on EVERY run, including a clean one. Nobody should
 	// read "CLEAN" without also reading what this tool structurally cannot see.
 	Limitations []string `json:"limitations"`
+
+	// AppLimitations are the caveats about grok.me apps and the public sources used
+	// to find them, also present in Limitations. They are kept apart by ORIGIN, not
+	// picked out by matching text, because --apps-only (what an agent reads) must
+	// carry them and nothing else: a secrets limitation begins with a repository
+	// path, and a path can contain any word a text filter would look for.
+	AppLimitations []string `json:"-"`
+}
+
+// AddAppLimitations records caveats about apps or public sources in both lists.
+func (r *Report) AddAppLimitations(ls ...string) {
+	r.Limitations = append(r.Limitations, ls...)
+	r.AppLimitations = append(r.AppLimitations, ls...)
 }

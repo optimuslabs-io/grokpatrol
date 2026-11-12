@@ -27,7 +27,35 @@ No Make target for a single test — use `go test -run <Name> ./internal/<pkg>/`
 ## Invariants (each mechanically enforced — a failed build/test, not a silent regression)
 
 - **No network, no third-party deps.** Don't import `net`, `net/http`, `crypto/tls`, `os/user`; keep
-  `go.sum` empty. `make verify-deps` enforces this via `go list -deps`.
+  `go.sum` empty. `make verify-deps` enforces this via `go list -deps`. The one exception is the
+  `grokpatrol-online` build: files tagged `//go:build online` (`internal/exposure/check.go`,
+  `cmd/grokpatrol/online_on.go`, `internal/pdns/sources_online.go`) may use `net/http`, for
+  `--check-exposure`, `--scan-public`, `--discover` and `--grok-search` only. API keys travel only in request headers,
+  never a URL, an error or the report (tests plant a key and look for it). Keep everything
+  else in `internal/exposure` untagged and network-free (`classify.go` is tested in the default
+  build), and watch indirect imports: `net/textproto` pulls in `net`.
+- **grok.me hosts are the only file-derived non-path strings in the report.** `apps.Hosts` admits
+  exactly one DNS label under grok.me; `exposure.checkOne` re-validates before any request, so a
+  string from a file can never become an arbitrary network destination. Names from public sources
+  and `--app-hosts` lines pass the same check (`pdns.AddHosts` never echoes a rejected line); xAI
+  search results are taken from cited URLs only, never the model's prose; a custom domain is requested only under a domain the user passed with `--org-domain`
+  (`exposure.allowed`). `pdns` matching lives untagged so it is tested in the default build. Apps
+  never feed the verdict.
+- **`--scan-public` keeps rule ids and paths, never content.** `exposure.ScanAsset` runs
+  `secrets.ScanBytes` with a fixed file name (a server-chosen path must not steer the allowlists) and
+  returns `model.AppSecret{Rule, Kind, Asset}`; `ScriptPaths` admits only same-host paths that pass
+  `SafePath` (letters, digits, `._~/-`), so a page cannot get a destination or a sentence into the
+  report. Browser-safe rules live in `exposure.browserRules`, noisy ones in `skippedRules`.
+  `TestScanPublicFetchesOnlySameHostScriptsAndRecordsNoValues` plants keys and looks for them.
+- **Agents read `--apps-only` only.** `report.AppsJSON` is its own type (`appsRecord`), not a filtered
+  `Report`, so a new report field cannot leak into it; `TestAppsOnlyCarriesNoRepoOrSecretLocations`
+  and `TestAppsJSONSelectsCaveatsByOriginNotText` enforce it. App caveats are kept apart by origin
+  (`Report.AppLimitations`, via `AddAppLimitations`), never picked out by text: a secrets caveat
+  starts with a repo path, which can contain any word. The plugin skill
+  (`plugin/skills/grokpatrol-apps/SKILL.md`, shared by the Claude, Cursor and Grok manifests) runs
+  grokpatrol only through `scripts/find-apps.sh`, which validates keywords and domains, takes
+  search URLs on stdin, uses a private `mktemp -d`, and always passes `--apps-only`. Keep the three manifests' versions
+  equal (`make plugin-check`).
 - **Read-only.** All host file reads go through `hostfs.OpenRead` (O_RDONLY). `hostfs` is the only
   package touching the filesystem, and never creates/writes/renames/removes.
 - **`gitx` is the only package that runs a subprocess**, allowlist `rev-list`, `ls-tree`,
