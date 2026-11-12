@@ -4,6 +4,8 @@ package exposure
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,6 +26,38 @@ func (r rewrite) RoundTrip(req *http.Request) (*http.Response, error) {
 	out := req.Clone(req.Context())
 	out.URL.Scheme, out.URL.Host = r.target.Scheme, r.target.Host
 	return r.next.RoundTrip(out)
+}
+
+type failingBody struct {
+	read bool
+}
+
+func (b *failingBody) Read(p []byte) (int, error) {
+	if !b.read {
+		b.read = true
+		copy(p, "<html>")
+		return len("<html>"), nil
+	}
+	return 0, errors.New("private read failure")
+}
+
+func (*failingBody) Close() error { return nil }
+
+type failingBodyTransport struct{}
+
+func (failingBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+		Body: io.NopCloser(&failingBody{}), Request: req}, nil
+}
+
+func TestCheckOneTreatsHomePageReadFailureAsUnknown(t *testing.T) {
+	client := &http.Client{Transport: failingBodyTransport{}}
+	app := model.PublishedApp{Host: "mine.grok.me"}
+	checkOne(context.Background(), client, &app, Config{ScanSecrets: true}, new(atomic.Int64))
+	if app.Exposure != model.ExposureUnknown || app.ExposureNote != "could not read the home page response" ||
+		app.HTTPStatus != http.StatusOK || app.SecretScan != "not scanned: could not read the home page response" {
+		t.Errorf("incomplete page was classified or scanned: %+v", app)
+	}
 }
 
 func TestCheckOneSendsNoCredentialsAndClassifies(t *testing.T) {

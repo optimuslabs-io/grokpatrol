@@ -203,10 +203,17 @@ func scanFile(path string, max int64) ([]string, error) {
 	seen := map[string]bool{}
 	buf := make([]byte, 0, chunkSize+overlap)
 	tmp := make([]byte, chunkSize)
+	var read int64
 	for {
 		n, rerr := io.ReadFull(r, tmp)
+		read += int64(n)
 		buf = append(buf, tmp[:n]...)
-		for _, h := range Hosts(buf) {
+		final := rerr == io.EOF || rerr == io.ErrUnexpectedEOF
+		if final && max > 0 && read >= max {
+			fi, statErr := f.Stat()
+			final = statErr == nil && fi.Size() <= read
+		}
+		for _, h := range hosts(buf, final) {
 			seen[h] = true
 		}
 		if rerr != nil {
@@ -239,6 +246,10 @@ var reserved = map[string]bool{"www": true}
 // with '-'), nothing label-like immediately before it, and nothing that would make
 // grok.me part of a longer name after it (grok.me.example.com, grok.meow).
 func Hosts(b []byte) []string {
+	return hosts(b, true)
+}
+
+func hosts(b []byte, allowEOF bool) []string {
 	lower := bytes.ToLower(b)
 	var out []string
 	seen := map[string]bool{}
@@ -249,7 +260,7 @@ func Hosts(b []byte) []string {
 		}
 		at := i + j
 		i = at + len(suffix)
-		if !endsName(lower, i) {
+		if !endsName(lower, i, allowEOF) {
 			continue
 		}
 		start := at
@@ -277,9 +288,9 @@ func Hosts(b []byte) []string {
 }
 
 // endsName reports whether the hostname really stops at i.
-func endsName(b []byte, i int) bool {
+func endsName(b []byte, i int, allowEOF bool) bool {
 	if i >= len(b) {
-		return true
+		return allowEOF
 	}
 	c := b[i]
 	if isLabelByte(c) {

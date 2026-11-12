@@ -81,6 +81,50 @@ func TestScanFileHonoursSizeCap(t *testing.T) {
 	}
 }
 
+func TestScanFileDefersChunkEndUntilBoundaryIsKnown(t *testing.T) {
+	host := "chunk-end.grok.me"
+	for _, tc := range []struct {
+		name string
+		tail string
+		max  int64
+		want []string
+	}{
+		{"next chunk continues hostname", ".evil.example", 0, nil},
+		{"next chunk starts with boundary", " /", 0, []string{host}},
+		{"cap hides next hostname byte", ".evil.example", chunkSize, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := append(bytes.Repeat([]byte{' '}, chunkSize-len(host)), []byte(host+tc.tail)...)
+			path := filepath.Join(t.TempDir(), "History")
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := scanFile(path, tc.max)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("actual EOF at cap", func(t *testing.T) {
+		data := append(bytes.Repeat([]byte{' '}, chunkSize-len(host)), []byte(host)...)
+		path := filepath.Join(t.TempDir(), "History")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := scanFile(path, chunkSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(got, []string{host}) {
+			t.Errorf("got %v, want [%s]", got, host)
+		}
+	})
+}
+
 func TestRunFindsAppsInEverySource(t *testing.T) {
 	home := t.TempDir()
 	write := func(rel, content string) {

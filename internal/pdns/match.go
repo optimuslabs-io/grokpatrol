@@ -296,7 +296,11 @@ func Enrich(ctx context.Context, sources []Source, cnames CNAMESource, rep *mode
 			}
 			sort.Strings(found)
 			for _, h := range found {
-				if _, ok := index[h]; ok {
+				if i, ok := index[h]; ok {
+					a := &rep.Apps[i]
+					a.PointsTo = targets[h]
+					a.MatchedBy = fmt.Sprintf("custom domain under %s, CNAME to %s", d, targets[h])
+					spans[h].apply(a)
 					continue
 				}
 				a := model.PublishedApp{

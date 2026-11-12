@@ -141,7 +141,15 @@ func checkOne(ctx context.Context, client *http.Client, app *model.PublishedApp,
 		return
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	if readErr != nil {
+		app.HTTPStatus = resp.StatusCode
+		app.Exposure, app.ExposureNote = model.ExposureUnknown, "could not read the home page response"
+		if cfg.ScanSecrets {
+			app.SecretScan = "not scanned: could not read the home page response"
+		}
+		return
+	}
 
 	app.HTTPStatus = resp.StatusCode
 	app.Exposure, app.ExposureNote = Classify(Response{
@@ -184,17 +192,24 @@ func scanApp(ctx context.Context, client *http.Client, app *model.PublishedApp, 
 			notes = append(notes, "stopped early")
 			break
 		}
-		if budget.Load() >= maxScanBytes {
+		reserved := reserveBudget(budget)
+		if reserved == 0 {
 			notes = append(notes, fmt.Sprintf("stopped at the per-run limit of %d MB", maxScanBytes>>20))
 			break
 		}
-		data, truncated, ok := fetchScript(ctx, client, app.Host, p, userAgent)
+		data, truncated, ok := fetchScript(ctx, client, app.Host, p, userAgent, reserved)
+		if int64(len(data)) < reserved {
+			budget.Add(int64(len(data)) - reserved)
+		}
 		if !ok {
 			continue
 		}
-		budget.Add(int64(len(data)))
 		if truncated {
-			notes = append(notes, p+" read only to "+strconv.Itoa(MaxScriptBytes>>20)+" MB")
+			if reserved < MaxScriptBytes {
+				notes = append(notes, "stopped at the per-run limit of "+strconv.Itoa(maxScanBytes>>20)+" MB")
+			} else {
+				notes = append(notes, p+" read only to "+strconv.Itoa(MaxScriptBytes>>20)+" MB")
+			}
 		}
 		hits, err := ScanAsset(p, data)
 		if err != nil {
@@ -210,9 +225,26 @@ func scanApp(ctx context.Context, client *http.Client, app *model.PublishedApp, 
 	}
 }
 
+func reserveBudget(budget *atomic.Int64) int64 {
+	for {
+		used := budget.Load()
+		if used >= maxScanBytes {
+			return 0
+		}
+		reservation := int64(MaxScriptBytes)
+		if remaining := maxScanBytes - used; reservation > remaining {
+			reservation = remaining
+		}
+		if budget.CompareAndSwap(used, used+reservation) {
+			return reservation
+		}
+	}
+}
+
 // fetchScript GETs one same-host path with no cookies or credentials. Only a 200
-// is scanned. A body over MaxScriptBytes is cut there and reported as truncated.
-func fetchScript(ctx context.Context, client *http.Client, host, path, userAgent string) (data []byte, truncated, ok bool) {
+// is scanned. The reserved byte limit bounds the read and a full reservation is
+// conservatively reported as truncated.
+func fetchScript(ctx context.Context, client *http.Client, host, path, userAgent string, limit int64) (data []byte, truncated, ok bool) {
 	if !SafePath(path) {
 		return nil, false, false
 	}
@@ -230,14 +262,11 @@ func fetchScript(ctx context.Context, client *http.Client, host, path, userAgent
 	if resp.StatusCode != http.StatusOK {
 		return nil, false, false
 	}
-	data, err = io.ReadAll(io.LimitReader(resp.Body, MaxScriptBytes+1))
+	data, err = io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
-		return nil, false, false
+		return data, false, false
 	}
-	if len(data) > MaxScriptBytes {
-		return data[:MaxScriptBytes], true, true
-	}
-	return data, false, true
+	return data, int64(len(data)) == limit, true
 }
 
 // dedupeSecrets keeps one entry per rule and asset, server secrets first.

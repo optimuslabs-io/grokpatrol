@@ -56,13 +56,14 @@ var appDetectors = map[string]bool{"apps": true, "discover": true, "app-hosts": 
 func AppsJSON(w io.Writer, rep *model.Report) error {
 	out := appsRecord{
 		Schema: model.SchemaVersion + "+apps", Tool: rep.Tool, Options: rep.Options, Verdict: rep.Verdict,
-		Apps: rep.Apps, Errors: []model.ScanError{}, Limitations: []string{},
+		Apps: appsOnlyCopies(rep.Apps), Errors: []model.ScanError{}, Limitations: []string{},
 	}
 	if out.Apps == nil {
 		out.Apps = []model.PublishedApp{}
 	}
 	for _, e := range rep.Errors {
 		if appDetectors[e.Detector] {
+			e.Path = ""
 			out.Errors = append(out.Errors, e)
 		}
 	}
@@ -73,4 +74,18 @@ func AppsJSON(w io.Writer, rep *model.Report) error {
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false)
 	return enc.Encode(out)
+}
+
+func appsOnlyCopies(apps []model.PublishedApp) []model.PublishedApp {
+	out := make([]model.PublishedApp, len(apps))
+	for i, app := range apps {
+		out[i] = app
+		if app.Seen != nil {
+			out[i].Seen = make([]model.Evidence, len(app.Seen))
+			for j, evidence := range app.Seen {
+				out[i].Seen[j].Note = evidence.Note
+			}
+		}
+	}
+	return out
 }

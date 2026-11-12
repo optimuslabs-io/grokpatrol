@@ -177,3 +177,24 @@ func TestAddHosts(t *testing.T) {
 		t.Errorf("a custom domain from search must not be checkable: %+v", a)
 	}
 }
+
+func TestEnrichMergesCNAMEIntoExistingSearchCustomDomain(t *testing.T) {
+	rep := &model.Report{}
+	if added, rejected := AddHosts(rep, []string{"https://apps.acme.com/"}, []string{"acme.com"}); added != 1 || rejected != 0 {
+		t.Fatalf("AddHosts added=%d rejected=%d", added, rejected)
+	}
+	cnames := fakeCNAMEs{"acme.com": {{
+		Name: "apps.acme.com", RRType: "CNAME", Target: "acme-app.grok.me",
+		Source: "otx", First: at(2), Last: at(8),
+	}}}
+	res := Enrich(context.Background(), nil, cnames, rep, nil, []string{"acme.com"})
+	if res.Added != 0 || len(rep.Apps) != 1 {
+		t.Fatalf("CNAME duplicate added an app: result=%+v apps=%+v", res, rep.Apps)
+	}
+	a := rep.Apps[0]
+	if a.PointsTo != "acme-app.grok.me" || !strings.Contains(a.MatchedBy, "CNAME to acme-app.grok.me") ||
+		!slices.Equal(a.Sources, []string{"otx", "web-search"}) ||
+		a.FirstSeen == nil || !a.FirstSeen.Equal(at(2)) || a.LastSeen == nil || !a.LastSeen.Equal(at(8)) {
+		t.Errorf("existing search app did not receive CNAME evidence: %+v", a)
+	}
+}

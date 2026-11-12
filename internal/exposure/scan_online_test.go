@@ -91,3 +91,52 @@ func TestScanPublicStopsAtTheRunBudget(t *testing.T) {
 		t.Errorf("SecretScan = %q", app.SecretScan)
 	}
 }
+
+func TestReserveBudgetNeverExceedsCap(t *testing.T) {
+	var budget atomic.Int64
+	budget.Store(maxScanBytes - 1)
+	if got := reserveBudget(&budget); got != 1 {
+		t.Fatalf("last reservation = %d, want 1", got)
+	}
+	if got := reserveBudget(&budget); got != 0 {
+		t.Fatalf("reservation beyond cap = %d, want 0", got)
+	}
+	if got := budget.Load(); got != maxScanBytes {
+		t.Errorf("reserved %d bytes, want cap %d", got, maxScanBytes)
+	}
+}
+
+func TestScanAppReleasesUnusedReservation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/small.js" {
+			_, _ = w.Write([]byte("tiny"))
+		}
+	}))
+	defer srv.Close()
+	target, _ := url.Parse(srv.URL)
+	client := &http.Client{Transport: rewrite{target: target, next: http.DefaultTransport}}
+	app := model.PublishedApp{Host: "mine.grok.me"}
+	var budget atomic.Int64
+	scanApp(context.Background(), client, &app, []byte(`<script src="/small.js"></script>`), "", &budget)
+	if got := budget.Load(); got != 4 {
+		t.Errorf("budget holds %d bytes after a 4-byte response, want 4", got)
+	}
+}
+
+func TestScanAppBoundsFinalReservation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/large.js" {
+			_, _ = w.Write([]byte("more than one byte"))
+		}
+	}))
+	defer srv.Close()
+	target, _ := url.Parse(srv.URL)
+	client := &http.Client{Transport: rewrite{target: target, next: http.DefaultTransport}}
+	app := model.PublishedApp{Host: "mine.grok.me"}
+	var budget atomic.Int64
+	budget.Store(maxScanBytes - 1)
+	scanApp(context.Background(), client, &app, []byte(`<script src="/large.js"></script>`), "", &budget)
+	if got := budget.Load(); got != maxScanBytes || !strings.Contains(app.SecretScan, "per-run limit") {
+		t.Errorf("budget=%d secret scan=%q, want cap and a limit note", got, app.SecretScan)
+	}
+}

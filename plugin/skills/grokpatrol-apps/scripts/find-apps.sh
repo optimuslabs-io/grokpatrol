@@ -93,7 +93,7 @@ else
 	head -c 4194304 > "$hosts"
 fi
 
-set -- --json --apps-only --discover --check-exposure --app-hosts "$hosts"
+set -- --json --apps-only --quiet --discover --check-exposure --app-hosts "$hosts"
 for k in $keywords; do set -- "$@" --org-keyword "$k"; done
 for d in $domains; do set -- "$@" --org-domain "$d"; done
 [ -z "$grok" ] || set -- "$@" --grok-search
