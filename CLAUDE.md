@@ -92,7 +92,8 @@ No Make target for a single test — use `go test -run <Name> ./internal/<pkg>/`
 - **CLEAN:** none of the above.
 
 `exfil` (collection/queueing/staging) forces EXPOSED; only `upload` (confirmed or unclassifiable
-delivery) reaches COMPROMISED. Grok emits no upload-completion event today, so COMPROMISED is
+delivery) reaches COMPROMISED. The `.skip` event (the upload veto, per third-party analysis) is
+recognised and reported as untagged Info: never an upload, never reassurance. Grok emits no upload-completion event today, so COMPROMISED is
 currently reachable only via a schema-drift fallback or a completion event that does not yet exist —
 a collected-and-queued host is EXPOSED, and its credentials must still be rotated.
 
@@ -176,8 +177,16 @@ skip it — never stdout, so `--json | jq` is untouched.
 
 ## Conventions
 
-- Config mitigation needs **both** `telemetry.trace_upload = false` and
-  `harness.disable_codebase_upload = true`; either alone is EXPOSED, not mitigated. Parser fails
+- Config mitigation needs `telemetry.trace_upload = false` plus the kill switches for the
+  generation on the host: `harness.disable_workspace_teleport = true` (1.x) **and**
+  `harness.disable_codebase_upload = true` (0.2.x; the 1.0.77 binary still carries it) on 1.x or
+  an unknown version, the 0.2.x switch alone only when every known version is in the analysed
+  0.2.x range (`version.Passive`). Any missing one is EXPOSED, not mitigated. Layers are read in
+  Grok's order (`/etc/grok` then `$GROK_HOME` `managed_config.toml`, `config.toml`, then
+  `requirements.toml` pins); an env var that can re-enable an upload (`GROK_TELEMETRY_TRACE_UPLOAD`)
+  makes it unverifiable unless pinned. `[features] telemetry` and `[diagnostics] error_reporting`
+  are recommended, never required. `grokver.LatestObserved` (1.0.77) is the newest Grok checked;
+  bump it only after re-checking config keys, log events and queue layout. Parser fails
   closed.
 - A file that merely mentions the bucket is not an install — `BinaryHit.IsInstall` gates on
   executable magic or `BundleMinBytes` (512 KB, for bundled JS builds).

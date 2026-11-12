@@ -108,7 +108,7 @@ grokpatrol --json | jq -r .verdict
 | Verdict | Meaning | Agent action |
 |---|---|---|
 | `COMPROMISED` | Proof the code left the machine (a confirmed or unclassifiable upload). | Escalate. Advise rotating credentials from the full git history of every touched repo. |
-| `EXPOSED` | Grok present and unmitigated, and/or repositories collected/queued/staged — but no proof of upload. | Advise rotate + set both config mitigations. Queued ≠ safe. |
+| `EXPOSED` | Grok present and unmitigated, and/or repositories collected/queued/staged — but no proof of upload. | Advise rotate + set the required config mitigations (`telemetry.trace_upload = false`, and `harness.disable_workspace_teleport = true` plus `harness.disable_codebase_upload = true`). Queued ≠ safe. |
 | `INDETERMINATE` | No upload and nothing high-severity, but part of the scan was degraded (unreadable dir/log). Not a clean bill of health. | Report the blind spots; recommend re-running with access. |
 | `CLEAN` | None of the above. | No action; note the standing blind-spots caveat. |
 

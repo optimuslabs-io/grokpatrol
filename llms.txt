@@ -9,7 +9,8 @@ hide. Most published indicators were network-based; grokpatrol answers the quest
 ask from the evidence left on disk: which repositories were taken, and what must be rotated.
 
 Confirmed-affected build: 0.2.93. Reported present through at least 0.2.99. Detects 0.1.212
-through the latest observed. macOS and Linux, amd64 and arm64.
+through the latest observed, 1.0.77 (grokver.LatestObserved); a newer build is flagged as
+unchecked. macOS and Linux, amd64 and arm64.
 
 Also lists Grok Build app addresses (*.grok.me) seen in browser history, Grok CLI sessions and shell history; a separate
 grokpatrol-online build adds --check-exposure (one unauthenticated request per app: public / app_sign_in / restricted / not_found / unknown),
@@ -41,7 +42,8 @@ reads secret values (git cat-file off the allowlist), and a degraded scan never 
 
 ## Mitigation
 
-- Stop uploads by setting BOTH in `~/.grok/config.toml`: `harness.disable_codebase_upload = true` and `telemetry.trace_upload = false`. Either alone is EXPOSED, not mitigated.
+- Stop uploads by setting ALL of these in `~/.grok/config.toml`: `telemetry.trace_upload = false`, `harness.disable_workspace_teleport = true` (Grok 1.x kill switch) and `harness.disable_codebase_upload = true` (0.2.x kill switch, still in 1.x binaries). A host running only 0.2.x needs just the first and last. Any one alone is EXPOSED, not mitigated; a 1.x host with only `disable_codebase_upload` is EXPOSED.
+- Recommended, not required: `[features] telemetry = false` and `[diagnostics] error_reporting = false`.
 
 ## Source
 
