@@ -190,12 +190,19 @@ acquire_lock() {
 		log "watch lock changed during stale-lock recovery; skipped"
 		return 1
 	fi
-	rm -rf "$dir/lock"
+	stale_lock="$dir/lock.stale.$$"
+	if [ -e "$stale_lock" ] || [ -L "$stale_lock" ] ||
+		! mv "$dir/lock" "$stale_lock" 2>/dev/null; then
+		log "watch lock changed during stale-lock recovery; skipped"
+		return 1
+	fi
 	if ! mkdir "$dir/lock" 2>/dev/null; then
+		rm -rf "$stale_lock"
 		log "another run acquired the watch lock; skipped"
 		return 1
 	fi
 	printf '%s\n' "$$" >"$dir/lock/owner"
+	rm -rf "$stale_lock" 2>/dev/null || true
 }
 
 release_lock() {

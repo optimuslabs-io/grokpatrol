@@ -73,6 +73,7 @@ wait "$first" || fail "first stale-lock run failed"
 wait "$second" || fail "second stale-lock run failed"
 [ "$(grep -xc -- "--watch" "$FAKE_ARGS")" = 1 ] || fail "stale-lock recovery started overlapping runs"
 [ ! -e "$stale/lock" ] || fail "stale-lock recovery left a lock behind"
+[ -z "$(find "$stale" -maxdepth 1 -name 'lock.stale.*' -print -quit)" ] || fail "stale-lock recovery left a stale lock behind"
 
 # install and uninstall change nothing without --apply.
 HOME="$work/home" sh "$script" install --bin "$fake" --dir "$work/inst" --keyword acmepay >"$work/plan"
