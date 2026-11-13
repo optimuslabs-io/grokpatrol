@@ -50,6 +50,9 @@ type PublishedApp struct {
 	// SecretScan is tool-authored prose saying what the secret scan read, or why it
 	// did not run for this app. Empty when --scan-public was not asked for.
 	SecretScan string `json:"secret_scan,omitempty"`
+	// SecretScanAssets lists assets successfully scanned in this run. It is
+	// internal metadata used to retain findings from assets that could not be read.
+	SecretScanAssets []string `json:"-"`
 }
 
 // AppSecret is one content rule that matched in a public app.

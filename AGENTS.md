@@ -75,6 +75,12 @@ grokpatrol --version     # print version and exit
   path; never a value) and `secret_scan` (what was read, or why not). Only apps seen on this host or
   under `--org-domain` are scanned unless `--scan-keyword-matches` is passed; ask the user before
   passing it, since it scans apps that may be someone else's.
+- `grokpatrol-online --watch <file>` is a light, scheduled run: grok.me addresses only, no
+  repository scan. It prints a `grokpatrol-watch/1` record (`apps`, `alerts`, `errors`,
+  `limitations`) for `plugin/skills/grokpatrol-apps/scripts/watch-apps.sh` to save, and alerts for
+  apps that newly open without sign-in. It cannot warn before a publish (that happens on grok.com).
+  Set it up with `watch-apps.sh install`, which prints a plan; pass `--apply` only after the user
+  agrees, since it installs a launchd agent.
 - `grokpatrol-online --discover` adds apps from free public sources (crt.sh and urlscan.io with no
   key, AlienVault OTX with a free `$OTX_API_KEY`); `--grok-search` adds xAI web and X search (needs
   `$XAI_API_KEY`, bills the user's xAI API credits; ask first); `--app-hosts <file>` adds URLs from

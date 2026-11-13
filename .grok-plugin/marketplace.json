@@ -7,7 +7,7 @@
       "name": "grokpatrol",
       "description": "Find Grok Build apps (*.grok.me) tied to your org and check whether they open without sign-in, using free sources and grokpatrol-online.",
       "category": "security",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "homepage": "https://github.com/optimuslabs-io/grokpatrol",
       "source": { "type": "local", "path": "./plugin" }
     }

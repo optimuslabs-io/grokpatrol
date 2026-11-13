@@ -151,6 +151,8 @@ plugin-check:
 	@test -f plugin/skills/grokpatrol-apps/SKILL.md || { echo "FAIL: the shared skill is missing"; exit 1; }
 	@test -x plugin/skills/grokpatrol-apps/scripts/find-apps.sh || { echo "FAIL: the skill's find-apps.sh is missing or not executable"; exit 1; }
 	@sh -n plugin/skills/grokpatrol-apps/scripts/find-apps.sh || { echo "FAIL: find-apps.sh has a syntax error"; exit 1; }
+	@test -x plugin/skills/grokpatrol-apps/scripts/watch-apps.sh || { echo "FAIL: the skill's watch-apps.sh is missing or not executable"; exit 1; }
+	@sh testdata/watch_apps_test.sh
 	@echo "OK: plugin manifests parse and agree"
 
 ## check: everything CI runs -- deps, fmt, vet, race tests, cross-compile smoke
@@ -160,7 +162,7 @@ check: verify-deps plugin-check
 	go vet ./...
 	go test -race ./...
 	go vet -tags online ./...
-	go test -race -tags online ./internal/exposure/ ./internal/pdns/
+	go test -race -tags online ./internal/exposure/ ./internal/pdns/ ./internal/watch/
 	@echo "cross-compile smoke (catches //go:build mistakes before release, not during):"
 	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(GOFLAGS) -o /dev/null ./... & p1=$$!; \
 	 GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build $(GOFLAGS) -o /dev/null ./... & p2=$$!; \

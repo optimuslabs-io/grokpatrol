@@ -15,7 +15,8 @@ Also lists Grok Build app addresses (*.grok.me) seen in browser history, Grok CL
 grokpatrol-online build adds --check-exposure (one unauthenticated request per app: public / app_sign_in / restricted / not_found / unknown),
 --scan-public (scans public apps' home page and same-host scripts in memory for keys; records rule id, kind and path, never the value)
 and --discover (free: crt.sh, urlscan.io, AlienVault OTX with a free key), --grok-search (xAI web/X search, $XAI_API_KEY) and
---app-hosts (validated URLs from your own search). An agent plugin in this repo (skill grokpatrol-apps, Parallel free search MCP)
+--app-hosts (validated URLs from your own search), and --watch <file> (a light scheduled run that alerts when an app newly opens
+without sign-in; the plugin's watch-apps.sh schedules it and shows a desktop notification). An agent plugin in this repo (skill grokpatrol-apps, Parallel free search MCP)
 runs it end to end in Claude Code, Cursor or the Grok CLI (`<agent> plugin marketplace add optimuslabs-io/grokpatrol`), reading
 only --json --apps-only output, which carries no repositories or secret locations.
 

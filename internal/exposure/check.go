@@ -179,11 +179,13 @@ func scanEligible(app *model.PublishedApp, keywordMatches bool) bool {
 // scanApp scans the home page already fetched and the same-host scripts it loads.
 // Nothing fetched outlives this call.
 func scanApp(ctx context.Context, client *http.Client, app *model.PublishedApp, page []byte, userAgent string, budget *atomic.Int64) {
+	app.SecretScanAssets = nil
 	found, err := ScanAsset("/", page)
 	if err != nil {
 		app.SecretScan = "not scanned: the secret rules failed to load"
 		return
 	}
+	app.SecretScanAssets = append(app.SecretScanAssets, "/")
 	paths := ScriptPaths(page, app.Host)
 	scanned := 0
 	var notes []string
@@ -216,6 +218,7 @@ func scanApp(ctx context.Context, client *http.Client, app *model.PublishedApp, 
 			continue
 		}
 		found = append(found, hits...)
+		app.SecretScanAssets = append(app.SecretScanAssets, p)
 		scanned++
 	}
 	app.Secrets = dedupeSecrets(found)

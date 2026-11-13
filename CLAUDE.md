@@ -30,7 +30,7 @@ No Make target for a single test — use `go test -run <Name> ./internal/<pkg>/`
   `go.sum` empty. `make verify-deps` enforces this via `go list -deps`. The one exception is the
   `grokpatrol-online` build: files tagged `//go:build online` (`internal/exposure/check.go`,
   `cmd/grokpatrol/online_on.go`, `internal/pdns/sources_online.go`) may use `net/http`, for
-  `--check-exposure`, `--scan-public`, `--discover` and `--grok-search` only. API keys travel only in request headers,
+  `--check-exposure`, `--scan-public`, `--watch`, `--discover` and `--grok-search` only. API keys travel only in request headers,
   never a URL, an error or the report (tests plant a key and look for it). Keep everything
   else in `internal/exposure` untagged and network-free (`classify.go` is tested in the default
   build), and watch indirect imports: `net/textproto` pulls in `net`.
@@ -47,6 +47,14 @@ No Make target for a single test — use `go test -run <Name> ./internal/<pkg>/`
   `SafePath` (letters, digits, `._~/-`), so a page cannot get a destination or a sentence into the
   report. Browser-safe rules live in `exposure.browserRules`, noisy ones in `skippedRules`.
   `TestScanPublicFetchesOnlySameHostScriptsAndRecordsNoValues` plants keys and looks for them.
+- **`--watch` reads its record, never writes it.** `internal/watch` (untagged) loads the previous
+  record, validates every entry as if it were hostile (hosts through `apps.Hosts`, rule ids and asset
+  paths, notes to short plain text), decides which apps are due and builds the next record and its
+  alerts; `runWatch` prints it on stdout and the alerts on stderr as `alert<TAB>title<TAB>message`.
+  The plugin's `watch-apps.sh` saves the record and shows the notification, so grokpatrol stays
+  read-only. The record carries no file paths. An alert fires when `public_since` goes from unset to
+  set; an `unknown` check never clears it, so a flaky network neither hides nor repeats an alert.
+  `testdata/watch_apps_test.sh` (run by `make plugin-check`) tests the script with a stand-in binary.
 - **Agents read `--apps-only` only.** `report.AppsJSON` is its own type (`appsRecord`), not a filtered
   `Report`, so a new report field cannot leak into it; `TestAppsOnlyCarriesNoRepoOrSecretLocations`
   and `TestAppsJSONSelectsCaveatsByOriginNotText` enforce it. App caveats are kept apart by origin
