@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/config"
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/grokver"
 	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
@@ -63,9 +64,17 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 		return res, nil
 	}
 
+	// A configured trace bucket (endpoints.trace_upload_bucket, GROK_TELEMETRY_GCS_BUCKET)
+	// is searched for too: an upload redirected there never names xAI's bucket.
+	var buckets [][]byte
+	for _, b := range config.UploadBuckets(env) {
+		buckets = append(buckets, []byte(b))
+	}
+
 	var (
 		events  []event
 		rawHits []model.Evidence
+		cfgHits []model.Evidence
 		// version -> the log file it was first read from. A version with no provenance is
 		// a claim the reader cannot check, and "(logs)" was not a location: this host has
 		// four versions across a rotated history, and which FILE each came from is how you
@@ -77,7 +86,7 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
-		ingest(f, &events, &rawHits, versions, &res)
+		ingest(f, &sink{events: &events, rawHits: &rawHits, cfgHits: &cfgHits, versions: versions, buckets: buckets}, &res)
 	}
 
 	// Correlation is GLOBAL, across every log file at once. A start event in
@@ -99,6 +108,7 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	}
 
 	res.Findings = append(res.Findings, findings(repos, rawHits, events, authSummary)...)
+	res.Findings = append(res.Findings, configuredBucketFindings(cfgHits)...)
 	res.Summary = summarize(files, repos, rawHits)
 	return res, nil
 }
@@ -206,7 +216,16 @@ func isLogName(name string) bool {
 	return strings.HasPrefix(n, "unified") && strings.Contains(n, ".jsonl")
 }
 
-func ingest(path string, events *[]event, rawHits *[]model.Evidence, versions map[string]string, res *engine.Result) {
+// sink is where handleLine puts what one line yielded.
+type sink struct {
+	events   *[]event
+	rawHits  *[]model.Evidence // lines naming xAI's bucket or a codebase archive
+	cfgHits  *[]model.Evidence // lines naming a CONFIGURED trace bucket
+	versions map[string]string
+	buckets  [][]byte // configured trace buckets, as "gs://name/" markers
+}
+
+func ingest(path string, out *sink, res *engine.Result) {
 	f, err := hostfs.OpenRead(path)
 	if err != nil {
 		res.Errors = append(res.Errors, model.ScanError{
@@ -246,7 +265,7 @@ func ingest(path string, events *[]event, rawHits *[]model.Evidence, versions ma
 		line, err := readLine(br)
 		if len(line) > 0 {
 			lineNo++
-			if !handleLine(line, path, lineNo, events, rawHits, versions) {
+			if !handleLine(line, path, lineNo, out) {
 				parseErrs++
 			}
 		}
@@ -290,29 +309,52 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 
 // handleLine reports whether the line decoded as JSON. Note the ordering: the raw
 // substring check runs FIRST, so it fires even on a line that fails to parse.
-func handleLine(line []byte, path string, lineNo int, events *[]event, rawHits *[]model.Evidence, versions map[string]string) bool {
-	if bytes.Contains(line, markerBucket) || bytes.Contains(line, markerArchive) {
-		*rawHits = append(*rawHits, model.Evidence{
-			Path:    path,
-			Locator: fmt.Sprintf("line:%d", lineNo),
-			Note:    "log line references the exfiltration bucket or a codebase archive",
-		})
+//
+// The one exception is a line that parses as the upload VETO (kindSkip). It is an
+// event this tool recognises, so the schema has not moved, and it may well name the
+// bucket the upload would have gone to: counting it as a raw reference would read
+// the kill switch doing its job as proof of an upload.
+func handleLine(line []byte, path string, lineNo int, out *sink) bool {
+	raw := bytes.Contains(line, markerBucket) || bytes.Contains(line, markerArchive)
+	cfg := false
+	if !raw {
+		for _, b := range out.buckets {
+			if bytes.Contains(line, b) {
+				cfg = true
+				break
+			}
+		}
 	}
+	at := model.Evidence{Path: path, Locator: fmt.Sprintf("line:%d", lineNo)}
 
 	m, ok := parseLine(line)
+	var ev event
+	if ok {
+		ev = eventFrom(m)
+		ev.File, ev.Line = path, lineNo
+	}
+	if ok && ev.Kind == kindSkip {
+		raw, cfg = false, false
+	}
+	if raw {
+		at.Note = "log line references the exfiltration bucket or a codebase archive"
+		*out.rawHits = append(*out.rawHits, at)
+	}
+	if cfg {
+		at.Note = "log line references a configured trace-upload bucket"
+		*out.cfgHits = append(*out.cfgHits, at)
+	}
 	if !ok {
 		return false
 	}
-	ev := eventFrom(m)
-	ev.File, ev.Line = path, lineNo
 
 	if ev.Version != "" {
-		if _, seen := versions[ev.Version]; !seen {
-			versions[ev.Version] = path
+		if _, seen := out.versions[ev.Version]; !seen {
+			out.versions[ev.Version] = path
 		}
 	}
 	if ev.Kind != kindOther {
-		*events = append(*events, ev)
+		*out.events = append(*out.events, ev)
 	}
 	return true
 }

@@ -96,7 +96,7 @@ printf '%s\n' 'https://example-app.grok.me/' | <skill-dir>/scripts/find-apps.sh 
   (free; it also finds custom domains under `--domain`), and a higher urlscan limit with
   `$URLSCAN_API_KEY`. OTX learns the org domain; each app checked sees one request from this
   machine (up to 9 for a public app under `--scan-public`).
-- The scan also reads this machine's browser history, Grok CLI sessions and shell history for
+- The scan also reads this machine's browser history, Grok CLI sessions, Grok's clipboard backup and shell history for
   grok.me addresses. It is read-only and takes a minute or two.
 - grokpatrol never opens `~/.grok/auth.json` and never runs the `grok` binary. Do not work around
   either.

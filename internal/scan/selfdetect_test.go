@@ -43,7 +43,9 @@ func TestCompiledBinaryDoesNotContainItsOwnMarkers(t *testing.T) {
 	// were sitting in .rodata as the log-event constants and the config key. Any
 	// marker matching is enough to report a binary as a grok install, so all of them
 	// have to be absent.
-	for _, marker := range DefaultMarkers {
+	// MarkerTeleport is not scanned for, but it is stored the same way and must stay
+	// out of the binary just the same.
+	for _, marker := range append(append([]string{}, DefaultMarkers...), MarkerTeleport) {
 		if bytes.Contains(blob, []byte(marker)) {
 			t.Errorf("the compiled binary contains the contiguous marker %q.\n"+
 				"grokpatrol will now detect ITSELF (and every copy of itself on disk) as a grok install.\n"+
@@ -66,6 +68,7 @@ func TestMarkersAreAssembledCorrectly(t *testing.T) {
 		MarkerBucket:   "grok-code-session-traces",
 		MarkerEvent:    "repo_state.upload",
 		MarkerFlag:     "disable_codebase_upload",
+		MarkerTeleport: "disable_workspace_teleport",
 		MarkerArchive:  "before_codebase.tar.gz",
 		MarkerEndpoint: "cli-chat-proxy.grok.com",
 	}

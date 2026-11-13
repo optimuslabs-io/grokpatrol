@@ -24,8 +24,16 @@ var (
 	// "repo_state.upload" -- the log event name. Present even in a build that
 	// renamed the bucket, which is why it is worth matching separately.
 	MarkerEvent = rev("daolpu.etats_oper")
-	// "disable_codebase_upload" -- the mitigation flag's own name.
+	// "disable_codebase_upload" -- the 0.2.x kill switch's own name. Grok 1.x
+	// binaries still carry it (1.0.77 does), so it stays a marker.
 	MarkerFlag = rev("daolpu_esabedoc_elbasid")
+	// "disable_workspace_teleport" -- the 1.x kill switch, documented as "Kill switch
+	// for per-turn workspace snapshots". It is NOT in DefaultMarkers: Grok extracts its
+	// own config reference, which names this key, into ~/.grok/docs on every launch,
+	// and every 1.x binary seen so far also carries the bucket and endpoint markers.
+	// It is stored reversed all the same, because the config detector needs the name
+	// and grokpatrol must not carry any Grok key as a readable literal.
+	MarkerTeleport = rev("tropelet_ecapskrow_elbasid")
 	// "before_codebase.tar.gz" -- the archive filename.
 	MarkerArchive = rev("zg.rat.esabedoc_erofeb")
 	// "cli-chat-proxy.grok.com" -- the API host the CLI talks to.

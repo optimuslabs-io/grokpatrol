@@ -28,7 +28,9 @@ The Grok Build CLI was found to silently upload entire git repositories to Googl
   exactly where secrets tend to hide.
 
 Confirmed affected: `0.2.93`. Reported still present in versions through at least `0.2.99`.
-grokpatrol detects Grok versions `0.1.212` through the latest observed.
+grokpatrol detects Grok versions `0.1.212` through the latest observed, `1.0.77`
+(`grokver.LatestObserved`); a newer build is flagged, because its config keys, log events or
+queue layout may have changed.
 
 Most published indicators were network-based — you had to be watching the wire while it
 happened. `grokpatrol` answers the question you can still ask afterwards: **what evidence
@@ -108,11 +110,11 @@ grokpatrol scanning /Users/you
     ✓ deepscan  1 executable carrying the bucket name, 1 upload queue, 2 staged archives (28ms)
   → logs      reading Grok's logs (incl. rotated and gzipped) for repo_state.upload.start / .enqueued events
   → queue     listing the upload_queue: staged codebase archives, and manifests naming the destination bucket
-  → config    checking config.toml for BOTH upload mitigations: harness.disable_codebase_upload and telemetry.trace_upload
+  → config    checking config.toml, managed_config.toml and requirements.toml for the upload mitigations: telemetry.trace_upload, harness.disable_workspace_teleport, harness.disable_codebase_upload
   → version   inferring the Grok version from install manifests, package metadata and binary strings
     ✓ logs      2 repositories with 3 archives QUEUED FOR UPLOAD, 1 repository collected, upload unconfirmed
     ✓ queue     2 codebase archives staged (371.2 KB), 1 manifest naming the bucket
-    ✓ config    NEITHER mitigation set: uploads are not blocked
+    ✓ config    NO required mitigation set: uploads are not blocked
     ✓ version   0.1.212, 0.2.39, 0.2.51, 0.2.56 -- REPORTED AFFECTED
   → secrets   git rev-list --objects HEAD minus the working tree, per implicated repository
     ✓ secrets   3 secret files, 2 DELETED FROM THE CHECKOUT but still in history
@@ -124,7 +126,7 @@ VERDICT: EXPOSED
 
   ACTION
     Rotate credentials from full git history of touched repos.
-    Mitigate uploads: set harness.disable_codebase_upload = true and telemetry.trace_upload = false in ~/.grok/config.toml (both required; see MITIGATIONS).
+    Mitigate uploads: set telemetry.trace_upload = false, harness.disable_workspace_teleport = true and harness.disable_codebase_upload = true in ~/.grok/config.toml (all required; see MITIGATIONS).
 
 CREDENTIAL PATHS   (filenames and object ids only -- contents were never read by this tool)
   PATH        PATHS  DELETED
@@ -157,7 +159,7 @@ for scripting) for that.
 | Staged archives awaiting upload | `~/.grok/upload_queue/` |
 | Manifests naming the destination bucket | staged `metadata.json` → `gs://grok-code-session-traces/` |
 | The bucket name embedded in the binary | any executable on disk |
-| Both missing mitigations | `~/.grok/config.toml` → see below |
+| Missing upload mitigations | `~/.grok/config.toml`, `managed_config.toml`, `requirements.toml` (also under `/etc/grok`) → see below |
 | Affected version | install manifests, package metadata, binary strings |
 | **Secrets in the uploaded object set** | `git rev-list --objects HEAD` minus the working tree |
 
@@ -231,7 +233,8 @@ pattern: in November 2026 [Claroc](https://blog.claroc.io/ghostshares-grok-build
 
 The apps live in xAI's cloud, so the only trace on a laptop is the address itself. grokpatrol
 looks for it in browser history (Chrome, Chromium, Brave, Edge, Arc, Firefox, Safari), Grok CLI
-sessions and shell history, and lists what it finds under **GROK.ME APPS**. Two caveats:
+sessions, Grok's clipboard backup (`~/.grok/last-copy.txt`, or wherever `GROK_COPY_FILE` points)
+and shell history, and lists what it finds under **GROK.ME APPS**. Two caveats:
 
 - **Seen here is not the same as yours.** Browser history records every app someone opened,
   including other people's. Apps never opened on this machine leave no trace at all.
@@ -433,8 +436,9 @@ the `VERDICT`.
 **Which Grok Build CLI versions are affected?**
 `0.2.93` is the confirmed-affected build — publicly reproduced collecting whole repositories and
 uploading them. The collector is reported still present through at least `0.2.99`. grokpatrol
-detects versions `0.1.212` through the latest observed and labels each build CONFIRMED AFFECTED,
-REPORTED AFFECTED, or neither.
+detects versions `0.1.212` through the latest observed (`1.0.77`) and labels each build CONFIRMED
+AFFECTED, REPORTED AFFECTED, or neither. A build newer than `1.0.77` gets an extra note: grokpatrol
+has not checked its config keys, log events or queue layout.
 
 **How do I check if Grok uploaded my code after the fact?**
 Most published indicators were network-based — you had to be watching the wire while it happened.
@@ -448,9 +452,25 @@ logs leave no trace. That is why a degraded or blind scan reports INDETERMINATE,
 why the report prints what it could not see on every run.
 
 **How do I stop Grok from uploading my repositories?**
-Set **both** mitigations in `~/.grok/config.toml`: `harness.disable_codebase_upload = true` and
-`telemetry.trace_upload = false`. Either one alone is not enough — grokpatrol reports a host with
-only one set as EXPOSED, not mitigated.
+Set **all** of these in `~/.grok/config.toml`:
+
+```toml
+[telemetry]
+trace_upload = false
+
+[harness]
+disable_workspace_teleport = true   # the Grok 1.x kill switch
+disable_codebase_upload = true      # the 0.2.x kill switch; 1.x binaries still carry it
+```
+
+Grok 1.x documents only `disable_workspace_teleport`, so a 1.x host with only the old key is
+EXPOSED. The 1.x binary still contains `disable_codebase_upload`, so grokpatrol asks for both on
+1.x and on any host whose version it cannot tell; a host running only 0.2.x needs just
+`trace_upload` and `disable_codebase_upload`. Any one setting alone is not enough. A
+`requirements.toml` pin counts, and so does a fleet `managed_config.toml` your own file does not
+override; `GROK_TELEMETRY_TRACE_UPLOAD` in the environment makes the mitigation unverifiable.
+
+Recommended, not required: `[features] telemetry = false` and `[diagnostics] error_reporting = false`.
 
 **What secrets were exposed, and which do I rotate first?**
 The exfiltrated set was every git object reachable from HEAD, so a secret you *deleted* from your

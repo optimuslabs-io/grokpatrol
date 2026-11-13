@@ -53,7 +53,7 @@ func findings(d *engine.Discovered, env *engine.Env) []model.Finding {
 			Title:    fmt.Sprintf("%d executables contain the exfiltration bucket name %q", len(installs), scan.MarkerBucket),
 			Detail: "The destination bucket for the repository uploads is named inside these programs. That means the " +
 				"collector code is on this machine; it does not by itself prove it ran -- the log ledger answers that.",
-			Remediation: "Remove the Grok Build CLI. Until then, set " + scan.MarkerFlag + " = true under [harness] in config.toml.",
+			Remediation: "Remove the Grok Build CLI. Until then, set " + scan.MarkerTeleport + " = true and " + scan.MarkerFlag + " = true under [harness], and trace_upload = false under [telemetry], in config.toml.",
 			Evidence:    ev,
 		})
 	}
