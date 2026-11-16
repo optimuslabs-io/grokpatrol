@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/config"
 	"github.com/optimuslabs-io/grokpatrol/internal/model"
 )
 
@@ -186,8 +187,9 @@ func TestConfigRowPointsAtMitigationsSection(t *testing.T) {
 	}
 }
 
-// The section is a two-line lookup, not remediation prose: both settings, named exactly.
-func TestMitigationsSectionIsShortAndNamesBothSettings(t *testing.T) {
+// The section is a short lookup, not remediation prose: every required setting, named
+// exactly, then the recommended extras labelled so nobody mistakes them for required.
+func TestMitigationsSectionIsShortAndNamesEverySetting(t *testing.T) {
 	rep := &model.Report{
 		Verdict:  model.VerdictExposed,
 		Findings: []model.Finding{cfgFinding("config.not_mitigated", "harness.disable_codebase_upload", "~/.grok/config.toml")},
@@ -206,13 +208,47 @@ func TestMitigationsSectionIsShortAndNamesBothSettings(t *testing.T) {
 	if end := strings.Index(section, "\n\n"); end > 0 {
 		section = section[:end]
 	}
-	if n := strings.Count(section, "\n"); n > 3 {
-		t.Errorf("MITIGATIONS section should be very short (header + 2 lines), got %d lines:\n%s", n, section)
+	want := len(config.Mitigations()) + len(config.Recommended())
+	if n := strings.Count(section, "\n"); n > want {
+		t.Errorf("MITIGATIONS section should be header + %d lines, got %d lines:\n%s", want, n, section)
 	}
-	for _, want := range []string{"harness", "disable_codebase_upload", "true", "telemetry", "trace_upload", "false"} {
-		if !strings.Contains(section, want) {
-			t.Errorf("MITIGATIONS section must contain %q; got:\n%s", want, section)
+	for _, m := range config.Mitigations() {
+		line := lineWith(section, m.Key+" = "+m.Want)
+		if line == "" || !strings.Contains(line, "["+m.Table+"]") || !strings.Contains(line, "required") ||
+			strings.Contains(line, "not required") {
+			t.Errorf("MITIGATIONS must list %s.%s = %s as required; got:\n%s", m.Table, m.Key, m.Want, section)
 		}
+	}
+	for _, m := range config.Recommended() {
+		if line := lineWith(section, m.Key+" = "+m.Want); !strings.Contains(line, "recommended, not required") {
+			t.Errorf("MITIGATIONS must mark %s.%s as recommended, not required; got:\n%s", m.Table, m.Key, section)
+		}
+	}
+}
+
+func lineWith(s, sub string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(l, sub) {
+			return l
+		}
+	}
+	return ""
+}
+
+// An environment override is not a pass: the row says the setting is unconfirmed.
+func TestConfigRowNamesEnvironmentOverride(t *testing.T) {
+	rep := &model.Report{
+		Verdict:  model.VerdictExposed,
+		Findings: []model.Finding{cfgFinding("config.env_override", "telemetry.trace_upload", "~/.grok/config.toml")},
+	}
+	var buf bytes.Buffer
+	Human(&buf, rep, Style{})
+	out := buf.String()
+	if !strings.Contains(out, "telemetry.trace_upload overridden by the environment, so UNCONFIRMED") {
+		t.Errorf("config row does not name the environment override; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Mitigate uploads") {
+		t.Errorf("an environment override must still get the mitigation advice; got:\n%s", out)
 	}
 }
 

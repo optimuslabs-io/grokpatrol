@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/optimuslabs-io/grokpatrol/internal/detect/config"
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
 	"github.com/optimuslabs-io/grokpatrol/internal/model"
@@ -65,12 +66,18 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 	if len(homes) == 0 {
 		homes = []string{env.GrokHome}
 	}
+	// A configured trace bucket is a destination too: a manifest naming it was
+	// prepared for an upload that never names xAI's bucket.
+	buckets := config.UploadBuckets(env)
+	var cfgMetadata []bucketManifest
+
 	roots := newRepoRootCache()
 	for _, h := range homes {
 		q := filepath.Join(h, "upload_queue")
 		if fi, err := os.Stat(q); err == nil && fi.IsDir() {
 			queues = appendUnique(queues, q)
-			sc := walkQueue(ctx, q, roots, &res)
+			sc := walkQueue(ctx, q, roots, buckets, &res)
+			cfgMetadata = append(cfgMetadata, sc.cfgMetadata...)
 			sizes[q] = queueSize{Files: sc.files, Bytes: sc.bytes, Truncated: sc.truncated}
 			for _, x := range sc.metadata {
 				metadata = appendUnique(metadata, x)
@@ -103,6 +110,7 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 
 	res.RepoHints = hints
 	res.Findings = findings(queues, metadata, archives, sizes)
+	res.Findings = append(res.Findings, configuredBucketFindings(cfgMetadata)...)
 	res.Summary = summarize(queues, metadata, archives)
 	return res, nil
 }
@@ -143,13 +151,19 @@ type queueSize struct {
 	Truncated bool
 }
 
+// bucketManifest is a metadata.json naming a configured trace bucket.
+type bucketManifest struct {
+	path, bucket string
+}
+
 type scanResult struct {
-	files     int
-	bytes     int64
-	archives  []engine.ArchiveFile
-	metadata  []string
-	hints     []string
-	truncated bool
+	files       int
+	bytes       int64
+	archives    []engine.ArchiveFile
+	metadata    []string
+	cfgMetadata []bucketManifest
+	hints       []string
+	truncated   bool
 }
 
 // walkQueue looks inside a staging directory in a SINGLE pass.
@@ -165,7 +179,7 @@ type scanResult struct {
 // user's own source code; a forensic tool does not unpack the data whose theft it
 // is investigating. (Hashing happens later, in hashArchives, and even that only
 // reads -- see the maxHashedArchives comment.)
-func walkQueue(ctx context.Context, q string, roots *repoRootCache, res *engine.Result) scanResult {
+func walkQueue(ctx context.Context, q string, roots *repoRootCache, buckets []string, res *engine.Result) scanResult {
 	var sc scanResult
 
 	err := filepath.WalkDir(q, func(path string, e fs.DirEntry, err error) error {
@@ -204,6 +218,13 @@ func walkQueue(ctx context.Context, q string, roots *repoRootCache, res *engine.
 			roots.markManifest(path)
 			if strings.Contains(string(b), scan.MarkerBucket) {
 				sc.metadata = append(sc.metadata, path)
+			} else {
+				for _, bk := range buckets {
+					if strings.Contains(string(b), bk) {
+						sc.cfgMetadata = append(sc.cfgMetadata, bucketManifest{path: path, bucket: bk})
+						break
+					}
+				}
 			}
 			sc.hints = append(sc.hints, hintsFromBytes(b, roots)...)
 		case strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".tgz"):
@@ -252,6 +273,31 @@ func hashArchives(ctx context.Context, archives []engine.ArchiveFile, res *engin
 				"Every archive is still listed by path and size; only the SHA-256 corroboration is missing.",
 			len(archives)-hashed, len(archives), maxHashedArchives))
 	}
+}
+
+// configuredBucketFindings is queue.metadata_bucket for a CONFIGURED trace bucket.
+// Same severity and tags: a manifest with a concrete destination is staging, not
+// delivery, wherever the destination is.
+func configuredBucketFindings(ms []bucketManifest) []model.Finding {
+	if len(ms) == 0 {
+		return nil
+	}
+	sort.Slice(ms, func(i, j int) bool { return ms[i].path < ms[j].path })
+	ev := make([]model.Evidence, 0, len(ms))
+	for _, m := range ms {
+		ev = append(ev, model.Evidence{Path: m.path, Locator: m.bucket, Note: "manifest names the configured trace-upload bucket"})
+	}
+	return []model.Finding{{
+		ID:       "queue.metadata_configured_bucket",
+		Detector: "queue",
+		Severity: model.SevHigh,
+		Tags:     []string{model.TagExfil, model.TagStaging},
+		Title:    fmt.Sprintf("%d staged manifests point at the configured trace-upload bucket", len(ms)),
+		Detail: "This host's Grok config redirects trace uploads to its own bucket, and these manifests map local " +
+			"files to paths inside it: an upload of your code was prepared with a concrete destination.",
+		Remediation: rotateAdvice,
+		Evidence:    ev,
+	}}
 }
 
 func findings(queues, metadata []string, archives []engine.ArchiveFile, sizes map[string]queueSize) []model.Finding {

@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -62,7 +63,15 @@ func summarize(vs []model.VersionEvidence) string {
 }
 
 // manifestNames are the passive places an install records its own version.
-var manifestNames = []string{"version", "VERSION", ".version", "install.json", "manifest.json", "package.json"}
+// version.json is where Grok 1.x keeps it ({"version", "stable_version", "checked_at"}).
+var manifestNames = []string{"version", "VERSION", ".version", "version.json", "install.json", "manifest.json", "package.json"}
+
+// downloadRe matches the self-updater's staged binaries, $GROK_HOME/downloads/
+// grok-<version>-<os>-<arch>. The file is named by the updater rather than written by
+// the build, and a download may be an old one never cleaned up or a new one not yet
+// switched to, so this is medium confidence: it says the version was on this machine,
+// not that it is the one that runs.
+var downloadRe = regexp.MustCompile(`^grok-(\d+\.\d+\.\d+)-`)
 
 const maxManifestBytes = 1 << 20
 
@@ -74,25 +83,8 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 		homes = []string{env.GrokHome}
 	}
 
-	for _, h := range homes {
-		for _, name := range manifestNames {
-			if ev := fromManifest(filepath.Join(h, name)); ev != nil {
-				res.Versions = append(res.Versions, *ev)
-			}
-		}
-	}
-
+	res.Versions = Passive(env)
 	for _, b := range env.Discovered.Binaries {
-		// Homebrew encodes the version in the install path: the path IS the manifest.
-		if ev := fromCellarPath(b.Path); ev != nil {
-			res.Versions = append(res.Versions, *ev)
-		}
-		dir := filepath.Dir(b.Path)
-		for _, cand := range []string{dir, filepath.Dir(dir)} {
-			if ev := fromManifest(filepath.Join(cand, "package.json")); ev != nil {
-				res.Versions = append(res.Versions, *ev)
-			}
-		}
 		// Only binaries that already matched a marker are string-mined, so we never
 		// read the whole home directory twice.
 		res.Versions = append(res.Versions, fromBinaryStrings(ctx, b.Path)...)
@@ -106,10 +98,95 @@ func (d *Detector) Run(ctx context.Context, env *engine.Env) (engine.Result, err
 			"Versions above the reported-affected range are classed UNKNOWN, never clean: this tool has no ground "+
 				"truth for a fixed release, and the verdict is driven by the artifacts on disk rather than by a version number.")
 	}
+	if newer := newerThanObserved(res.Versions); len(newer) > 0 {
+		res.Limitations = append(res.Limitations, fmt.Sprintf(
+			"Grok %s is newer than %s, the latest release grokpatrol was checked against. Its config keys, log event "+
+				"names and upload_queue layout may have changed, so a mitigation, an upload event or a staged archive "+
+				"in a form this tool does not know could be missed.", newer[0].Version, grokver.LatestObserved))
+	}
 	return res, nil
 }
 
-func fromManifest(path string) *model.VersionEvidence {
+// Passive is every version source that costs no more than a few small reads: the
+// manifests in each grok home, the updater's downloads, Homebrew's install path and a
+// package.json beside a discovered binary. It leaves out the binary-string mining
+// Run adds, which reads whole executables and is low confidence anyway.
+//
+// It is exported for the config detector, which runs alongside this one and needs
+// to know which Grok generation it is judging: 1.x renamed the documented kill switch.
+func Passive(env *engine.Env) []model.VersionEvidence {
+	var out []model.VersionEvidence
+
+	homes := env.Discovered.GrokHomes
+	if len(homes) == 0 {
+		homes = []string{env.GrokHome}
+	}
+	for _, h := range homes {
+		for _, name := range manifestNames {
+			out = append(out, fromManifest(filepath.Join(h, name))...)
+		}
+		out = append(out, fromDownloads(filepath.Join(h, "downloads"))...)
+	}
+
+	for _, b := range env.Discovered.Binaries {
+		// Homebrew encodes the version in the install path: the path IS the manifest.
+		if ev := fromCellarPath(b.Path); ev != nil {
+			out = append(out, *ev)
+		}
+		dir := filepath.Dir(b.Path)
+		for _, cand := range []string{dir, filepath.Dir(dir)} {
+			out = append(out, fromManifest(filepath.Join(cand, "package.json"))...)
+		}
+	}
+	return dedupe(out)
+}
+
+// fromDownloads reads versions out of the updater's staged binaries' NAMES. Nothing
+// is opened: the directory listing is the evidence.
+func fromDownloads(dir string) []model.VersionEvidence {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []model.VersionEvidence
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		m := downloadRe.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		out = append(out, model.VersionEvidence{
+			Version: m[1], Source: "download:" + e.Name(), Confidence: "medium",
+			Class: grokver.Class(m[1]), Path: filepath.Join(dir, e.Name()),
+		})
+	}
+	return out
+}
+
+// newerThanObserved returns the evidence for versions above grokver.LatestObserved,
+// newest first. Low confidence is skipped, as everywhere else: a semver scraped from
+// a bundle is as likely a dependency's as grok's.
+func newerThanObserved(vs []model.VersionEvidence) []model.VersionEvidence {
+	var out []model.VersionEvidence
+	for _, v := range vs {
+		if v.Confidence != "low" && grokver.NewerThanObserved(v.Version) {
+			out = append(out, v)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return grokver.Compare(out[i].Version, out[j].Version) > 0 })
+	return out
+}
+
+// fromManifest returns the version a manifest records, or nothing.
+//
+// Grok 1.x's version.json carries two: "version", the installed build (high
+// confidence), and "stable_version", the newest release the updater saw on its stable
+// channel when it last checked. The second is NOT what is installed -- it is what the
+// next update will install -- so it is kept, for the version inventory, at low
+// confidence, which keeps it out of every finding and banner.
+func fromManifest(path string) []model.VersionEvidence {
 	b, err := hostfs.ReadFileCapped(path, maxManifestBytes)
 	if err != nil || len(b) == 0 {
 		return nil
@@ -127,24 +204,33 @@ func fromManifest(path string) *model.VersionEvidence {
 				return nil
 			}
 		}
+		var out []model.VersionEvidence
 		v, _ := m["version"].(string)
-		if !grokver.Plausible(v) {
-			return nil
+		if grokver.Plausible(v) {
+			out = append(out, model.VersionEvidence{
+				Version: v, Source: "manifest:" + base, Confidence: "high",
+				Class: grokver.Class(v), Path: path,
+			})
 		}
-		return &model.VersionEvidence{
-			Version: v, Source: "manifest:" + base, Confidence: "high",
-			Class: grokver.Class(v), Path: path,
+		if base == "version.json" {
+			if sv, _ := m["stable_version"].(string); grokver.Plausible(sv) && sv != v {
+				out = append(out, model.VersionEvidence{
+					Version: sv, Source: "manifest:" + base + " (stable_version, not installed)", Confidence: "low",
+					Class: grokver.Class(sv), Path: path,
+				})
+			}
 		}
+		return out
 	}
 
 	v := strings.TrimSpace(string(b))
 	if !grokver.Plausible(v) {
 		return nil
 	}
-	return &model.VersionEvidence{
+	return []model.VersionEvidence{{
 		Version: v, Source: "manifest:" + base, Confidence: "high",
 		Class: grokver.Class(v), Path: path,
-	}
+	}}
 }
 
 func isGrokPkg(name string) bool {
@@ -242,12 +328,22 @@ func dedupe(in []model.VersionEvidence) []model.VersionEvidence {
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Confidence != out[j].Confidence {
-			return out[i].Confidence > out[j].Confidence // high before low
+		if ci, cj := confidenceRank(out[i].Confidence), confidenceRank(out[j].Confidence); ci != cj {
+			return ci > cj // high, then medium, then low
 		}
 		return out[i].Version < out[j].Version
 	})
 	return out
+}
+
+func confidenceRank(c string) int {
+	switch c {
+	case "high":
+		return 2
+	case "medium":
+		return 1
+	}
+	return 0
 }
 
 func findings(vs []model.VersionEvidence) []model.Finding {
@@ -276,7 +372,7 @@ func findings(vs []model.VersionEvidence) []model.Finding {
 			Title:    "Grok " + grokver.ConfirmedAffected + " is installed -- the version publicly reproduced uploading whole repositories",
 			Detail: "This is the exact version for which whole-repository upload to " + scan.BucketURL() + " was " +
 				"independently reproduced, including full git history and files deleted from the checkout.",
-			Remediation: "Remove it, and set " + scan.MarkerFlag + " = true under [harness] until you do.",
+			Remediation: "Remove it, and until you do set " + scan.MarkerFlag + " = true under [harness] and trace_upload = false under [telemetry].",
 			Evidence:    evidenceOf(confirmed),
 		})
 	}
@@ -290,6 +386,22 @@ func findings(vs []model.VersionEvidence) []model.Finding {
 			Detail: "Public reporting states the background collector was still present through " + grokver.ReportedAffectedMax +
 				". That is reported, not independently verified by this tool.",
 			Evidence: evidenceOf(reported),
+		})
+	}
+	if newer := newerThanObserved(vs); len(newer) > 0 {
+		out = append(out, model.Finding{
+			ID:       "version.newer_than_known",
+			Detector: "version",
+			// SevInfo and untagged: a newer build is not evidence of anything. It is a
+			// statement about this tool's own coverage, and it must not move the verdict
+			// in either direction.
+			Severity: model.SevInfo,
+			Title: fmt.Sprintf("Grok %s is newer than %s, the latest release grokpatrol was checked against",
+				newer[0].Version, grokver.LatestObserved),
+			Detail: "Grok's config keys, log event names and upload_queue layout were checked against " +
+				grokver.LatestObserved + ". A newer build may have renamed any of them, and a mitigation or an upload " +
+				"artifact in a form this tool does not know would not be recognised. Check for a newer grokpatrol.",
+			Evidence: evidenceOf(newer),
 		})
 	}
 	return out

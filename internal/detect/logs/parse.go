@@ -209,6 +209,15 @@ const (
 	// client starts logging its 2xx, grokpatrol RECOGNIZES it as the delivery proof it
 	// is instead of filing it under "unrecognized event".
 	kindUploadSuccess
+	// kindSkip is repo_state.upload.skip: an upload Grok decided NOT to make. A
+	// third-party analysis of Grok's logging reads it as the veto -- the kill switch
+	// suppressing a turn's archive upload. That reading is not independently
+	// confirmed here, so the handling is deliberately narrow: a skip is never counted
+	// as an upload or an enqueue (filing it under kindUnknownUpload read the kill
+	// switch working as proof of exfiltration, a false COMPROMISED), and it is never
+	// counted as reassurance either. It is reported as context and nothing else; a
+	// start or enqueue on the same turn is judged exactly as before.
+	kindSkip
 )
 
 // Composed at runtime from scan.MarkerEvent, never written as literals: grokpatrol
@@ -218,6 +227,7 @@ var (
 	eventPrefix   = scan.MarkerEvent
 	eventStart    = eventPrefix + ".start"
 	eventEnqueued = eventPrefix + ".enqueued"
+	eventSkip     = eventPrefix + ".skip"
 )
 
 // successSuffixes are the names a delivery-confirmation event might plausibly take.
@@ -256,6 +266,8 @@ func classify(event, consumer string, status int) eventKind {
 		return kindStart
 	case event == eventEnqueued:
 		return kindEnqueued
+	case event == eventSkip:
+		return kindSkip
 	case eventSuccess[event]:
 		return kindUploadSuccess
 	case isUploadSuccess(consumer, status):

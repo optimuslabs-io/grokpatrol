@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"time"
 
 	"github.com/optimuslabs-io/grokpatrol/internal/model"
@@ -79,6 +80,11 @@ type Env struct {
 	// because the shell searches $PATH left to right and the first match wins.
 	PathDirs []string
 
+	// Getenv reads the environment grokpatrol was started from. Nil means the real
+	// process environment; tests set it, so a developer's shell cannot change a
+	// fixture's verdict. Read through LookupEnv.
+	Getenv func(string) string
+
 	// Progress is live scan narration on stderr. Nil is fine (quiet / tests).
 	// deepscan Pulses during its walk so a minute-long blank terminal does not look
 	// hung; other detectors ignore it. The engine sets this from Engine.Progress
@@ -90,6 +96,14 @@ type Env struct {
 	// .grok found under ~/work has logs and a config of its own, and those must be
 	// parsed too. Assuming ~/.grok is the only grok home is a false negative.
 	Discovered Discovered
+}
+
+// LookupEnv returns an environment variable, through Getenv when it is set.
+func (e *Env) LookupEnv(key string) string {
+	if e.Getenv != nil {
+		return e.Getenv(key)
+	}
+	return os.Getenv(key)
 }
 
 // BinaryHit is a file containing at least one marker string.

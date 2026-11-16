@@ -116,6 +116,7 @@ var curated = map[string]bool{
 	"config.unparseable":            true,
 	"config.auth_present":           true,
 	"config.other_keys":             true,
+	"config.recommended_unset":      true, // MITIGATIONS prints the recommended rows
 	"version.confirmed_affected":    true, // installation, via rep.Versions
 	"version.reported_affected":     true,
 	"logs.archive_enqueued":         true, // ledger
@@ -604,13 +605,13 @@ func actionBanner(w io.Writer, rep *model.Report, s Style) {
 	if mitigate {
 		knobs := mitigateKnobs()
 		if s.Verbose {
-			fmt.Fprintf(w, "  %s\n", "  Mitigate uploads -- set BOTH in ~/.grok/config.toml ("+knobs+"):")
+			fmt.Fprintf(w, "  %s\n", "  Mitigate uploads -- set ALL in ~/.grok/config.toml ("+knobs+"):")
 			for _, line := range mitigateTOMLLines() {
 				fmt.Fprintf(w, "  %s\n", s.c(dim, "    "+line))
 			}
-			fmt.Fprintf(w, "  %s\n", s.c(dim, "  (either alone is not enough)"))
+			fmt.Fprintf(w, "  %s\n", s.c(dim, "  (no one of them is enough; see MITIGATIONS for recommended extras)"))
 		} else {
-			fmt.Fprintf(w, "  %s\n", "  Mitigate uploads: set "+knobs+" in ~/.grok/config.toml (both required; see MITIGATIONS).")
+			fmt.Fprintf(w, "  %s\n", "  Mitigate uploads: set "+knobs+" in ~/.grok/config.toml (all required; see MITIGATIONS).")
 		}
 	}
 	fmt.Fprintln(w)
@@ -637,34 +638,45 @@ func needsRotate(rep *model.Report) bool {
 func needsMitigate(rep *model.Report) bool {
 	for _, f := range rep.Findings {
 		switch f.ID {
-		case "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable":
+		case "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable",
+			"config.env_override":
 			return true
 		}
 	}
 	return false
 }
 
-// mitigateKnobs renders the two required config.toml settings as one phrase, e.g.
-// "harness.disable_codebase_upload = true and telemetry.trace_upload = false". Sourced
-// from config.Mitigations() rather than duplicated as literals, so this can never drift
-// from what the config detector actually checks.
+// mitigateKnobs renders the required config.toml settings as one phrase, e.g.
+// "telemetry.trace_upload = false, harness.disable_workspace_teleport = true and
+// harness.disable_codebase_upload = true". Sourced from config.Mitigations() rather
+// than duplicated as literals, so this can never drift from what the config detector
+// actually checks. It is the full set: a 0.2.x-only host needs only part of it, and
+// the rest costs nothing to set there.
 func mitigateKnobs() string {
 	var parts []string
 	for _, m := range config.Mitigations() {
 		parts = append(parts, fmt.Sprintf("%s.%s = %s", m.Table, m.Key, m.Want))
 	}
-	return strings.Join(parts, " and ")
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 }
 
-// mitigateTOMLLines renders the two required config.toml knobs as TOML, for the
-// --verbose ACTION block.
+// mitigateTOMLLines renders the required config.toml knobs as TOML, for the
+// --verbose ACTION block, one header per table.
 func mitigateTOMLLines() []string {
 	var lines []string
-	for i, m := range config.Mitigations() {
-		if i > 0 {
-			lines = append(lines, "")
+	table := ""
+	for _, m := range config.Mitigations() {
+		if m.Table != table {
+			if table != "" {
+				lines = append(lines, "")
+			}
+			lines = append(lines, "["+m.Table+"]")
+			table = m.Table
 		}
-		lines = append(lines, "["+m.Table+"]", fmt.Sprintf("%s = %s", m.Key, m.Want))
+		lines = append(lines, fmt.Sprintf("%s = %s", m.Key, m.Want))
 	}
 	return lines
 }
@@ -922,6 +934,7 @@ func configRows(rep *model.Report, s Style) [][2]string {
 	type cfg struct {
 		absent, unparse, mitigated bool
 		notSet, wrongValue         []string // mitigation keys, e.g. harness.disable_codebase_upload
+		overridden                 []string // keys an environment variable makes unverifiable
 	}
 	byPath := map[string]*cfg{}
 	var order []string
@@ -960,6 +973,9 @@ func configRows(rep *model.Report, s Style) [][2]string {
 		case "config.explicitly_disabled":
 			c := get(path(f))
 			c.wrongValue = append(c.wrongValue, key(f))
+		case "config.env_override":
+			c := get(path(f))
+			c.overridden = append(c.overridden, key(f))
 		}
 	}
 	if len(order) == 0 {
@@ -970,14 +986,22 @@ func configRows(rep *model.Report, s Style) [][2]string {
 		var val string
 		switch {
 		case c.mitigated:
-			val = s.c(green, "MITIGATED") + " -- both upload mitigations set"
+			val = s.c(green, "MITIGATED") + " -- all required upload mitigations set"
 		case c.absent:
-			val = s.c(yellow, "EXPOSED") + " -- no config.toml, so neither upload mitigation is set"
+			val = s.c(yellow, "EXPOSED") + " -- no config.toml, so no upload mitigation is set"
 		case c.unparse:
 			val = s.c(yellow, "EXPOSED") + " -- config.toml could not be fully read, so the mitigations are " +
 				"UNCONFIRMED -- verify it by hand"
 		default:
 			val = s.c(yellow, "EXPOSED") + " -- " + mitigationDetail(c.wrongValue, c.notSet)
+			if n := joinKeys(c.overridden); n != "" {
+				detail := n + " overridden by the environment, so UNCONFIRMED"
+				if len(c.wrongValue)+len(c.notSet) == 0 {
+					val = s.c(yellow, "EXPOSED") + " -- " + detail
+				} else {
+					val += "; " + detail
+				}
+			}
 		}
 		// "(see below)" points at the MITIGATIONS section printed right after this table.
 		return val + " (see below)"
@@ -1078,10 +1102,11 @@ func grokHomeOf(path string) string {
 }
 
 // mitigations is the short lookup table the config.toml row's "(see below)" points at:
-// the two settings that must both hold, named exactly as they must appear in
-// config.toml. It is NOT the remediation prose the rest of this file deliberately
-// omits (see the note near the end) -- just the two lines, so a reader who was told
-// "mitigations" has something to check them against without leaving the terminal.
+// the settings that must all hold, named exactly as they must appear in config.toml,
+// then the recommended extras marked as such. It is NOT the remediation prose the rest
+// of this file deliberately omits (see the note near the end) -- just the lines, so a
+// reader who was told "mitigations" has something to check them against without
+// leaving the terminal.
 //
 // Printed only when a config finding actually mentioned mitigations: a host with no
 // grok install never reaches this, and a section nothing points to is noise.
@@ -1092,7 +1117,12 @@ func mitigations(w io.Writer, rep *model.Report, s Style) {
 	fmt.Fprintln(w, s.c(bold, "MITIGATIONS"))
 	var rows [][]string
 	for _, m := range config.Mitigations() {
-		rows = append(rows, []string{"[" + m.Table + "]", fmt.Sprintf("%s = %s", m.Key, m.Want)})
+		rows = append(rows, []string{"[" + m.Table + "]", fmt.Sprintf("%s = %s", m.Key, m.Want), "required"})
+	}
+	// Recommended extras, labelled as such: they cut what else Grok sends but do not
+	// gate the uploads, so a host is mitigated without them.
+	for _, m := range config.Recommended() {
+		rows = append(rows, []string{"[" + m.Table + "]", fmt.Sprintf("%s = %s", m.Key, m.Want), s.c(dim, "recommended, not required")})
 	}
 	writeTable(w, "  ", rows)
 	fmt.Fprintln(w)
@@ -1101,7 +1131,8 @@ func mitigations(w io.Writer, rep *model.Report, s Style) {
 func hasConfigFinding(rep *model.Report) bool {
 	for _, f := range rep.Findings {
 		switch f.ID {
-		case "config.mitigated", "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable":
+		case "config.mitigated", "config.not_mitigated", "config.absent", "config.explicitly_disabled", "config.unparseable",
+			"config.env_override":
 			return true
 		}
 	}
@@ -1120,7 +1151,7 @@ func mitigationDetail(wrong, notSet []string) string {
 		parts = append(parts, n+" not set")
 	}
 	if len(parts) == 0 {
-		return "the upload mitigations are not both set"
+		return "the required upload mitigations are not all set"
 	}
 	return strings.Join(parts, "; ")
 }

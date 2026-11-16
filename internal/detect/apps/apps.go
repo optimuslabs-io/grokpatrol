@@ -6,7 +6,7 @@
 // searched by pattern, so "only people with the link" in practice means anyone. The
 // app is built and hosted in xAI's cloud; the only trace on a laptop is the address
 // itself, in the places a person or an agent used it: browser history, Grok CLI
-// sessions, shell history.
+// sessions, Grok's clipboard backup, shell history.
 //
 // This detector only reads. It never contacts an app; whether one is open to the
 // public is answered by the separate, opt-in online check (internal/exposure, built
@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/optimuslabs-io/grokpatrol/internal/engine"
 	"github.com/optimuslabs-io/grokpatrol/internal/hostfs"
@@ -34,7 +35,8 @@ func New() *Detector           { return &Detector{} }
 func (*Detector) Name() string { return "apps" }
 
 func (*Detector) Describe() string {
-	return "looking for Grok Build app addresses (*.grok.me) in browser history, Grok CLI sessions and shell history " +
+	return "looking for Grok Build app addresses (*.grok.me) in browser history, Grok CLI sessions, Grok's clipboard " +
+		"backup and shell history " +
 		"(read-only; no app is contacted)"
 }
 
@@ -177,7 +179,47 @@ func sources(ctx context.Context, env *engine.Env, res *engine.Result) []source 
 			})
 		}
 	}
+
+	// Grok writes every copy it makes to a backup file as well as the clipboard, so an
+	// app address copied out of a session is still here after the session is gone.
+	// The default sits in the Grok home; GROK_COPY_FILE moves it.
+	copies := make([]string, 0, len(homes)+1)
+	for _, gh := range homes {
+		copies = append(copies, filepath.Join(gh, "last-copy.txt"))
+	}
+	if p := copyFile(env, res); p != "" {
+		copies = append(copies, p)
+	}
+	seen := map[string]bool{}
+	for _, p := range copies {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
+			out = append(out, source{path: p, kind: "Grok clipboard backup"})
+		}
+	}
 	return out
+}
+
+// copyFile is the clipboard backup GROK_COPY_FILE names, or "" when it is unset or
+// cannot be located. A relative value is resolved by Grok from wherever Grok was
+// started, which this scan cannot know, so it is reported instead of guessed at.
+func copyFile(env *engine.Env, res *engine.Result) string {
+	v := env.LookupEnv("GROK_COPY_FILE")
+	switch {
+	case v == "":
+		return ""
+	case strings.HasPrefix(v, "~/"):
+		return filepath.Join(env.Home, v[2:])
+	case filepath.IsAbs(v):
+		return filepath.Clean(v)
+	}
+	res.AppLimitations = append(res.AppLimitations,
+		"GROK_COPY_FILE is set to a relative path, which Grok resolves from wherever it was started, so the "+
+			"clipboard backup it names was not searched.")
+	return ""
 }
 
 // chunkSize bounds memory per file: History databases run to hundreds of megabytes.

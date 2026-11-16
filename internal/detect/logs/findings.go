@@ -207,6 +207,25 @@ func findings(repos []model.RepoStatus, rawHits []model.Evidence, events []event
 		})
 	}
 
+	// The upload veto. Info and untagged, for the same belt-and-braces reason as the
+	// auth context above: it must not be load-bearing in either direction. It does not
+	// prove an upload (so it must not reach COMPROMISED, as it did when it fell through
+	// to kindUnknownUpload) and it does not prove the ABSENCE of one (a turn can be
+	// vetoed while an earlier turn was enqueued), so it never softens a finding either.
+	if skips := skipEvidence(events); len(skips) > 0 {
+		out = append(out, model.Finding{
+			ID:       "logs.upload_skipped",
+			Detector: "logs",
+			Severity: model.SevInfo,
+			Title:    engine.Plural(len(skips), eventSkip+" event") + ": Grok logged uploads it did not make",
+			Detail: "Third-party analysis of Grok's logging reads " + eventSkip + " as the upload veto: the kill switch " +
+				"suppressing a turn's repository upload. grokpatrol has not independently confirmed that reading, so " +
+				"these lines are not counted as uploads and are not counted as reassurance. Any collection or enqueue " +
+				"logged for the same repositories is reported above exactly as it would be without them.",
+			Evidence: skips,
+		})
+	}
+
 	if unknown := unknownEventNames(events); len(unknown) > 0 {
 		ev := make([]model.Evidence, 0, len(unknown))
 		for _, name := range unknown {
@@ -254,6 +273,41 @@ func fmtTime(t time.Time) string {
 		return "unknown"
 	}
 	return t.Format("2006-01-02")
+}
+
+func skipEvidence(events []event) []model.Evidence {
+	var out []model.Evidence
+	for _, e := range events {
+		if e.Kind == kindSkip {
+			out = append(out, model.Evidence{Path: e.File, Locator: fmt.Sprintf("line:%d", e.Line), Note: "upload veto logged"})
+		}
+	}
+	return sortEvidence(out)
+}
+
+// configuredBucketFindings reports log lines naming a CONFIGURED trace bucket.
+//
+// SevHigh + TagExfil, never TagUpload, and that is narrower than xAI's own bucket
+// gets (logs.raw_bucket_reference reads an unparsed reference as an upload). A
+// configured bucket is named by Grok's own configuration, so a line can mention it
+// while merely announcing where traces WOULD go; and a bucket the organisation set
+// up is not xAI. A reference still shows repository data was routed off the machine
+// or prepared to be, which is exposure.
+func configuredBucketFindings(hits []model.Evidence) []model.Finding {
+	if len(hits) == 0 {
+		return nil
+	}
+	return []model.Finding{{
+		ID:       "logs.configured_bucket_reference",
+		Detector: "logs",
+		Severity: model.SevHigh,
+		Tags:     []string{model.TagExfil},
+		Title:    fmt.Sprintf("%d log lines reference the configured trace-upload bucket", len(hits)),
+		Detail: "This host's Grok config redirects trace uploads to its own bucket, and these log lines name it. " +
+			"Uploads redirected there never name xAI's bucket, so they are searched for separately.",
+		Remediation: rotateAdvice,
+		Evidence:    sortEvidence(hits),
+	}}
 }
 
 func unknownEventNames(events []event) []string {

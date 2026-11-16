@@ -9,8 +9,8 @@ import "testing"
 // because a `true` happened to appear in a comment or inside a string. Each
 // "tricky" case below is an input a naive grep would get wrong in exactly that way.
 func TestParseFailsClosed(t *testing.T) {
-	harness := Mitigations()[0] // disable_codebase_upload = true
-	trace := Mitigations()[1]   // trace_upload = false
+	harness := mitigation(t, MitigationKey) // disable_codebase_upload = true
+	trace := mitigation(t, TraceKey)        // trace_upload = false
 
 	cases := []struct {
 		name          string
@@ -97,50 +97,36 @@ func TestParseFailsClosed(t *testing.T) {
 	}
 }
 
-// Both mitigations are required, so a config with only one produces a finding for
-// the other -- and never reports the host as mitigated.
+// Both 0.2.x mitigations are required, so a config with only one produces a finding
+// for the other -- and never reports the host as mitigated.
 func TestPartialMitigationIsNotMitigated(t *testing.T) {
-	st := parse("[harness]\ndisable_codebase_upload = true\n")
-	fs := mitigationFindings(st)
+	fs := mitigationFindings(homeOf("[harness]\ndisable_codebase_upload = true\n", true), noEnv)
 
-	for _, f := range fs {
-		if f.ID == "config.mitigated" {
-			t.Fatal("a host with only one of the two mitigations was reported as MITIGATED; " +
-				"it is still uploading session traces")
-		}
+	if hasID(fs, "config.mitigated") {
+		t.Fatal("a host with only one of the two mitigations was reported as MITIGATED; " +
+			"it is still uploading session traces")
 	}
-	found := false
-	for _, f := range fs {
-		if f.ID == "config.not_mitigated" {
-			found = true
-		}
-	}
-	if !found {
+	if !hasID(fs, "config.not_mitigated") {
 		t.Error("no finding was raised for the missing trace_upload mitigation")
 	}
 }
 
 func TestFullyMitigated(t *testing.T) {
-	st := parse("[telemetry]\ntrace_upload = false\n\n[harness]\ndisable_codebase_upload = true\n")
-	var mitigated bool
-	for _, f := range mitigationFindings(st) {
-		if f.ID == "config.mitigated" {
-			mitigated = true
-		}
+	fs := mitigationFindings(homeOf(legacyConfig, true), noEnv)
+	for _, f := range fs {
 		if f.ID == "config.not_mitigated" || f.ID == "config.explicitly_disabled" {
 			t.Errorf("unexpected finding on a fully mitigated config: %s", f.ID)
 		}
 	}
-	if !mitigated {
+	if !hasID(fs, "config.mitigated") {
 		t.Error("a config with both mitigations set was not reported as mitigated")
 	}
 }
 
-// Unrecognized options under the mitigation tables are surfaced: the key list came
-// from a screenshot, not from vendor docs, so there may be others.
+// Unrecognized options under the mitigation tables are surfaced: the list of what
+// Grok reads there changes between releases.
 func TestOtherKeysAreSurfaced(t *testing.T) {
-	st := parse("[harness]\ndisable_codebase_upload = true\nsome_new_upload_flag = true\n[telemetry]\ntrace_upload = false\n")
-	got := otherKeys(st)
+	got := otherKeys(homeOf("[harness]\ndisable_codebase_upload = true\nsome_new_upload_flag = true\n[telemetry]\ntrace_upload = false\n", true))
 	if len(got) != 1 || got[0] != "harness.some_new_upload_flag" {
 		t.Errorf("otherKeys = %v, want the one unrecognized key", got)
 	}
