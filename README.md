@@ -36,6 +36,14 @@ Most published indicators were network-based — you had to be watching the wire
 happened. `grokpatrol` answers the question you can still ask afterwards: **what evidence
 is left on this disk, which repos were taken, and what do I have to rotate?**
 
+It also covers the second Grok Build incident, apps published from grok.com that open for
+anyone ([GhostShares](https://blog.claroc.io/ghostshares-grok-build-apps)). Every scan lists the
+Grok Build apps (`*.grok.me`) this machine has opened. The separate `grokpatrol-online` build
+checks which of them open without sign-in, scans the public ones for leaked keys, finds your org's
+apps in public name lists, and can show a desktop alert within minutes of an app going public. See
+[Grok Build apps](#grok-build-apps-grokme). The standard `grokpatrol` binary still makes no network
+calls.
+
 ## Install
 
 ### 1. One-liner
@@ -404,8 +412,8 @@ grok plugin install grokpatrol
 ```
 
 Inside Grok, everything the agent reads goes to xAI, and what Grok uploads besides that depends on
-your own `~/.grok/config.toml`. Set both mitigations (see MITIGATIONS in the report) before you use
-the plugin there.
+your own `~/.grok/config.toml`. Set all the upload mitigations (see MITIGATIONS in the report)
+before you use the plugin there.
 
 Then ask the agent, for example: "Find Grok Build apps for acme.com and tell me which are public."
 It can also set up the watch above ("alert me when one of our apps goes public"); it shows you the

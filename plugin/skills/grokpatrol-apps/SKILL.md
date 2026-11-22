@@ -39,8 +39,9 @@ Code, Cursor and Grok.
 
 Everything you read goes to xAI, the vendor whose upload behaviour grokpatrol investigates. That is
 the main reason for the apps-only rule. What Grok itself uploads depends on the user's Grok
-settings (`telemetry.trace_upload` and `harness.disable_codebase_upload` in `~/.grok/config.toml`),
-not on this skill. If the user has not set both mitigations, say so before you start and let them
+settings (`telemetry.trace_upload`, `harness.disable_workspace_teleport` and
+`harness.disable_codebase_upload` in `~/.grok/config.toml`), not on this skill. If the user has not
+set all three, say so before you start and let them
 choose whether to continue here or in another agent.
 
 ## Steps
